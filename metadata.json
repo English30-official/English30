@@ -1,0 +1,6 @@
+{
+  "name": "English30",
+  "description": "منصة تعليمية عربية حديثة وتفاعلية لتعلم اللغة الإنجليزية للناطقين باللغة العربية",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
