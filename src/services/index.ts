@@ -7,3 +7,4 @@ export { subscriptionsService } from './subscriptionsService';
 export { paymentService } from './paymentService';
 export { auditService } from './auditService';
 export { ownerAIService } from './ownerAIService';
+export { supabase, isSupabaseConfigured, getSupabaseClient } from '../lib/supabase';
