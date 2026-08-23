@@ -6,6 +6,7 @@ import {
 import { ContentStatus } from '../../types';
 import { useOwnerCoursesCMS } from '../../hooks/useOwnerCoursesCMS';
 import { OwnerCourseManager } from './OwnerCourseManager';
+import { LessonBlocksRenderer } from '../LessonBlocksRenderer';
 
 export const OwnerCoursesCMS: React.FC = () => {
   const {
@@ -317,7 +318,7 @@ export const OwnerCoursesCMS: React.FC = () => {
                 يتكون هذا الدرس من كتل محتوى مرتبة ديناميكياً قابلة لإعادة الترتيب والنشر:
               </p>
 
-              <div className="space-y-2.5">
+              {previewLesson.blocks?.length ? <LessonBlocksRenderer blocks={previewLesson.blocks} includeUnpublished/> : <div className="space-y-2.5">
                 <div className="p-3.5 bg-indigo-50/50 border border-indigo-100 rounded-2xl flex items-center gap-3">
                   <div className="w-8 h-8 rounded-xl bg-indigo-600 text-white flex items-center justify-center text-xs font-bold">
                     <Video className="w-4 h-4" />
@@ -357,7 +358,7 @@ export const OwnerCoursesCMS: React.FC = () => {
                     <p className="text-[11px] text-slate-500">أسئلة الاختيار من متعدد مع التغذية الراجعة الفورية</p>
                   </div>
                 </div>
-              </div>
+              </div>}
             </div>
 
             <div className="pt-4 border-t border-slate-100 text-right">
