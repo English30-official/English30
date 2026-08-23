@@ -3,7 +3,7 @@ import { ActiveTab, Lesson, VocabItem, SentenceItem, FillInBlankQuestion, QuizQu
 import { lessonsService } from '../services';
 import { playAudioItem } from '../lib/speech';
 import confetti from 'canvas-confetti';
-import { Volume2, CheckCircle2, ArrowRight, BookOpen, Film, Play } from 'lucide-react';
+import { Volume2, CheckCircle2, ArrowRight, Film, Play } from 'lucide-react';
 
 interface LessonViewProps { lesson?: Lesson; setActiveTab: (tab: ActiveTab) => void; onLessonCompleted: (xpEarned: number) => void; }
 
