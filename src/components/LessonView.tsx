@@ -2,6 +2,10 @@ import React, { useState } from 'react';
 import { ActiveTab, Lesson, VocabItem, SentenceItem, FillInBlankQuestion, QuizQuestion } from '../types';
 import { SAMPLE_LESSON } from '../data/mockData';
 import { playAudioItem } from '../lib/speech';
+import { useAuth } from '../auth/AuthContext';
+import { useQuizEngine } from '../hooks/useQuizEngine';
+import { progressService } from '../services/progressService';
+import { LessonVideoPlayer } from './video/LessonVideoPlayer';
 import confetti from 'canvas-confetti';
 import {
   Volume2,
@@ -18,11 +22,8 @@ import {
   Check,
   RefreshCw,
   Video,
-  Play,
-  Pause,
   Clock,
   Film,
-  Subtitles,
   List,
 } from 'lucide-react';
 
@@ -41,10 +42,7 @@ export const LessonView: React.FC<LessonViewProps> = ({
     'explanation' | 'video' | 'vocab' | 'sentences' | 'grammar' | 'fill-blank' | 'quiz' | 'final-test' | 'completed'
   >('explanation');
 
-  // Video State
-  const [isPlayingVideo, setIsPlayingVideo] = useState(false);
-  const [videoSpeed, setVideoSpeed] = useState<number>(1);
-  const [showSubtitles, setShowSubtitles] = useState(true);
+  const { user } = useAuth();
 
   // Audio Speech state
   const [speakingId, setSpeakingId] = useState<string | null>(null);
@@ -53,13 +51,8 @@ export const LessonView: React.FC<LessonViewProps> = ({
   const [fibAnswers, setFibAnswers] = useState<{ [key: string]: string }>({});
   const [showFibResults, setShowFibResults] = useState(false);
 
-  // Quiz State
-  const [selectedAnswers, setSelectedAnswers] = useState<{ [key: string]: number }>({});
-  const [showQuizResults, setShowQuizResults] = useState(false);
-
-  // Final Test State
-  const [finalAnswers, setFinalAnswers] = useState<{ [key: string]: number }>({});
-  const [showFinalResults, setShowFinalResults] = useState(false);
+  const quiz = useQuizEngine(lesson.quizQuestions);
+  const finalTest = useQuizEngine(lesson.finalMiniTest?.questions ?? []);
 
   const handlePlayAudio = async (text: string, id: string, slow: boolean = false) => {
     setSpeakingId(id);
@@ -68,13 +61,11 @@ export const LessonView: React.FC<LessonViewProps> = ({
   };
 
   const handleSelectQuizAnswer = (qId: string, optionIndex: number) => {
-    if (showQuizResults) return;
-    setSelectedAnswers((prev) => ({ ...prev, [qId]: optionIndex }));
+    quiz.selectAnswer(qId, optionIndex);
   };
 
   const handleSelectFinalAnswer = (qId: string, optionIndex: number) => {
-    if (showFinalResults) return;
-    setFinalAnswers((prev) => ({ ...prev, [qId]: optionIndex }));
+    finalTest.selectAnswer(qId, optionIndex);
   };
 
   const handleFinishLesson = () => {
@@ -84,29 +75,12 @@ export const LessonView: React.FC<LessonViewProps> = ({
       origin: { y: 0.6 },
     });
     onLessonCompleted(100);
+    progressService.completeLesson(lesson.id, 100, user?.id);
     setActiveLessonStep('completed');
   };
 
-  const calculateQuizScore = () => {
-    let score = 0;
-    lesson.quizQuestions.forEach((q) => {
-      if (selectedAnswers[q.id] === q.correctAnswerIndex) {
-        score++;
-      }
-    });
-    return score;
-  };
-
-  const calculateFinalTestScore = () => {
-    if (!lesson.finalMiniTest?.questions) return 0;
-    let score = 0;
-    lesson.finalMiniTest.questions.forEach((q) => {
-      if (finalAnswers[q.id] === q.correctAnswerIndex) {
-        score++;
-      }
-    });
-    return score;
-  };
+  const calculateQuizScore = () => quiz.score;
+  const calculateFinalTestScore = () => finalTest.score;
 
   return (
     <div className="max-w-4xl mx-auto space-y-8 py-6">
@@ -290,65 +264,7 @@ export const LessonView: React.FC<LessonViewProps> = ({
 
           {/* Video Container & Player */}
           <div className="relative rounded-2xl overflow-hidden bg-slate-950 border border-slate-800 shadow-lg group">
-            {lesson.videoUrl && lesson.videoUrl.endsWith('.mp4') ? (
-              <video
-                src={lesson.videoUrl}
-                controls
-                className="w-full aspect-video rounded-2xl bg-black"
-                poster="https://images.unsplash.com/photo-1516321318423-f06f85e504b3?w=1200&auto=format&fit=crop&q=80"
-              />
-            ) : (
-              <div className="relative aspect-video w-full bg-slate-900 flex flex-col justify-between p-4 sm:p-6 text-white">
-                <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-900/80 to-indigo-950/40 pointer-events-none" />
-                
-                <div className="relative z-10 flex items-center justify-between text-xs text-slate-300">
-                  <div className="flex items-center gap-2 bg-slate-900/80 backdrop-blur-md px-3 py-1.5 rounded-full border border-slate-700">
-                    <span className="w-2 h-2 bg-red-500 rounded-full animate-ping" />
-                    <span className="font-bold text-white">English30 Studio</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => setShowSubtitles(!showSubtitles)}
-                      className={`px-2.5 py-1 rounded-lg text-xs font-bold border transition-colors cursor-pointer ${
-                        showSubtitles
-                          ? 'bg-indigo-600 text-white border-indigo-500'
-                          : 'bg-slate-800 text-slate-400 border-slate-700'
-                      }`}
-                    >
-                      <Subtitles className="w-3.5 h-3.5 inline ml-1" />
-                      الترجمة المزدوجة
-                    </button>
-                  </div>
-                </div>
-
-                <div className="relative z-10 flex flex-col items-center justify-center my-auto space-y-4 text-center">
-                  <button
-                    onClick={() => setIsPlayingVideo(!isPlayingVideo)}
-                    className="w-16 h-16 sm:w-20 sm:h-20 rounded-full bg-indigo-600 hover:bg-indigo-500 text-white flex items-center justify-center shadow-2xl shadow-indigo-500/50 transform hover:scale-110 active:scale-95 transition-all cursor-pointer"
-                  >
-                    {isPlayingVideo ? (
-                      <Pause className="w-8 h-8 fill-white" />
-                    ) : (
-                      <Play className="w-8 h-8 fill-white ml-1" />
-                    )}
-                  </button>
-                  <p className="text-xs sm:text-sm font-medium text-slate-300">
-                    {isPlayingVideo ? 'جاري تشغيل الشرح المرئي...' : 'اضغط لتشغيل الشرح المرئي الكامل'}
-                  </p>
-                </div>
-
-                {showSubtitles && (
-                  <div className="relative z-10 mx-auto bg-slate-950/90 border border-slate-700/80 px-4 py-2 rounded-xl text-center max-w-lg mb-2 shadow-lg">
-                    <p className="text-amber-300 font-english font-bold text-xs sm:text-sm">
-                      "Please present your passport and boarding pass at gate 5."
-                    </p>
-                    <p className="text-slate-300 text-[11px] mt-0.5">
-                      (يرجى إبراز جواز سفرك وبطاقة صعود الطائرة عند البوابة 5)
-                    </p>
-                  </div>
-                )}
-              </div>
-            )}
+            <LessonVideoPlayer url={lesson.videoUrl} title={lesson.videoTitleAr || lesson.titleAr} />
           </div>
 
           <div className="pt-6 border-t border-slate-100 flex items-center justify-between">
@@ -718,7 +634,7 @@ export const LessonView: React.FC<LessonViewProps> = ({
               <h2 className="text-xl font-bold text-slate-900">التمارين والأسئلة التفاعلية</h2>
               <p className="text-xs text-slate-500 mt-0.5">اختبر مدى فهمك لمحتوى الدرس واستحق مكافأة XP</p>
             </div>
-            {showQuizResults && (
+            {quiz.showResults && (
               <span className="text-xs font-black px-3 py-1 bg-amber-100 text-amber-800 rounded-lg">
                 النتيجة: {calculateQuizScore()} / {lesson.quizQuestions.length}
               </span>
@@ -727,7 +643,7 @@ export const LessonView: React.FC<LessonViewProps> = ({
 
           <div className="space-y-6">
             {lesson.quizQuestions.map((q, qIdx) => {
-              const selectedOpt = selectedAnswers[q.id];
+              const selectedOpt = quiz.answers[q.id];
 
               return (
                 <div key={q.id} className="bg-slate-50 p-6 rounded-2xl border border-slate-200 space-y-4">
@@ -749,7 +665,7 @@ export const LessonView: React.FC<LessonViewProps> = ({
                     {q.options.map((opt, optIdx) => {
                       let btnStyle = 'bg-white border-slate-200 text-slate-800 hover:bg-slate-100';
 
-                      if (showQuizResults) {
+                      if (quiz.showResults) {
                         if (optIdx === q.correctAnswerIndex) {
                           btnStyle = 'bg-emerald-100 border-emerald-400 text-emerald-950 font-bold';
                         } else if (selectedOpt === optIdx) {
@@ -771,7 +687,7 @@ export const LessonView: React.FC<LessonViewProps> = ({
                     })}
                   </div>
 
-                  {showQuizResults && (
+                  {quiz.showResults && (
                     <div className="p-3 bg-indigo-50 border border-indigo-100 rounded-xl text-xs text-indigo-900 leading-relaxed">
                       💡 <strong>التوضيح:</strong> {q.explanationAr}
                     </div>
@@ -782,10 +698,10 @@ export const LessonView: React.FC<LessonViewProps> = ({
           </div>
 
           <div className="pt-6 border-t border-slate-100 flex items-center justify-between">
-            {!showQuizResults ? (
+            {!quiz.showResults ? (
               <button
-                onClick={() => setShowQuizResults(true)}
-                disabled={Object.keys(selectedAnswers).length < lesson.quizQuestions.length}
+                onClick={() => quiz.setShowResults(true)}
+                disabled={Object.keys(quiz.answers).length < lesson.quizQuestions.length}
                 className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-extrabold px-6 py-3 rounded-xl text-xs sm:text-sm cursor-pointer"
               >
                 التحقق من الإجابات
@@ -821,7 +737,7 @@ export const LessonView: React.FC<LessonViewProps> = ({
               </p>
             </div>
 
-            {showFinalResults && (
+            {finalTest.showResults && (
               <span className="text-sm font-black px-4 py-2 bg-emerald-100 text-emerald-900 rounded-xl">
                 النتيجة: {calculateFinalTestScore()} / {lesson.finalMiniTest.questions.length}
               </span>
@@ -830,7 +746,7 @@ export const LessonView: React.FC<LessonViewProps> = ({
 
           <div className="space-y-6">
             {lesson.finalMiniTest.questions.map((q, qIdx) => {
-              const selectedOpt = finalAnswers[q.id];
+              const selectedOpt = finalTest.answers[q.id];
 
               return (
                 <div key={q.id} className="bg-slate-50 p-6 rounded-2xl border border-slate-200 space-y-4">
@@ -845,7 +761,7 @@ export const LessonView: React.FC<LessonViewProps> = ({
                     {q.options.map((opt, optIdx) => {
                       let btnStyle = 'bg-white border-slate-200 text-slate-800 hover:bg-slate-100';
 
-                      if (showFinalResults) {
+                      if (finalTest.showResults) {
                         if (optIdx === q.correctAnswerIndex) {
                           btnStyle = 'bg-emerald-100 border-emerald-400 text-emerald-950 font-bold';
                         } else if (selectedOpt === optIdx) {
@@ -867,7 +783,7 @@ export const LessonView: React.FC<LessonViewProps> = ({
                     })}
                   </div>
 
-                  {showFinalResults && (
+                  {finalTest.showResults && (
                     <div className="p-3 bg-emerald-50 border border-emerald-100 rounded-xl text-xs text-emerald-900 leading-relaxed">
                       💡 <strong>التوضيح:</strong> {q.explanationAr}
                     </div>
@@ -878,10 +794,10 @@ export const LessonView: React.FC<LessonViewProps> = ({
           </div>
 
           <div className="pt-6 border-t border-slate-100 flex items-center justify-between">
-            {!showFinalResults ? (
+            {!finalTest.showResults ? (
               <button
-                onClick={() => setShowFinalResults(true)}
-                disabled={Object.keys(finalAnswers).length < lesson.finalMiniTest.questions.length}
+                onClick={() => finalTest.setShowResults(true)}
+                disabled={Object.keys(finalTest.answers).length < lesson.finalMiniTest.questions.length}
                 className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-extrabold px-6 py-3 rounded-xl text-xs sm:text-sm cursor-pointer shadow-md"
               >
                 إنهاء الاختبار وعرض النتيجة

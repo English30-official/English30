@@ -1,6 +1,7 @@
-import React, { useState, useEffect } from 'react';
-import { PricingPlan, PaymentMethod, CheckoutResult, ActiveTab, PlatformSettings } from '../types';
-import { subscriptionsService, paymentService, settingsService } from '../services';
+import React from 'react';
+import { ActiveTab } from '../types';
+import { paymentService } from '../services';
+import { usePricingController } from '../hooks/usePricingController';
 import {
   CheckCircle2,
   ShieldCheck,
@@ -26,195 +27,16 @@ interface PricingViewProps {
   defaultPlanId?: string;
 }
 
-export const PricingView: React.FC<PricingViewProps> = ({
-  setActiveTab,
-  onStartLesson,
-  defaultPlanId,
-}) => {
-  // State management
-  const [plans, setPlans] = useState<PricingPlan[]>([]);
-  const [settings, setSettings] = useState<PlatformSettings>(settingsService.getSettingsSync());
-  const [isLoading, setIsLoading] = useState(true);
-  const [hasError, setHasError] = useState(false);
-  const [errorMessage, setErrorMessage] = useState('');
-  
-  // Pricing toggle
-  const [isYearly, setIsYearly] = useState(true);
-  const [openFaqIndex, setOpenFaqIndex] = useState<number | null>(0);
-
-  // Checkout workflow state
-  const [selectedPlan, setSelectedPlan] = useState<PricingPlan | null>(null);
-  const [viewState, setViewState] = useState<'plans' | 'checkout' | 'success'>('plans');
-
-  // Checkout form data
-  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('mada');
-  const [fullName, setFullName] = useState('محمد العتيبي');
-  const [email, setEmail] = useState('mohammed.student@example.com');
-  const [phone, setPhone] = useState('0501234567');
-  const [couponCode, setCouponCode] = useState('');
-  const [couponMessage, setCouponMessage] = useState<{ text: string; isSuccess: boolean } | null>(null);
-  const [appliedDiscountPct, setAppliedDiscountPct] = useState(0);
-  const [isValidatingCoupon, setIsValidatingCoupon] = useState(false);
-
-  // Card form simulation details
-  const [cardNumber, setCardNumber] = useState('5888 •••• •••• 4021');
-  const [cardExpiry, setCardExpiry] = useState('08/28');
-  const [cardCvv, setCardCvv] = useState('789');
-
-  // Processing checkout
-  const [isProcessingPayment, setIsProcessingPayment] = useState(false);
-  const [checkoutResult, setCheckoutResult] = useState<CheckoutResult | null>(null);
-
-  // Load plans from service
-  const fetchPlans = async () => {
-    setIsLoading(true);
-    setHasError(false);
-    setErrorMessage('');
-    try {
-      const data = await subscriptionsService.getPlans();
-      const activePlans = data.filter((p) => p.isActive !== false);
-      setPlans(activePlans);
-
-      // If defaultPlanId was provided, pre-select it
-      if (defaultPlanId) {
-        const found = activePlans.find((p) => p.id === defaultPlanId);
-        if (found && found.id !== 'free') {
-          setSelectedPlan(found);
-          setViewState('checkout');
-        }
-      }
-    } catch (err: any) {
-      setHasError(true);
-      setErrorMessage(err?.message || 'تعذر تحميل باقات الاشتراك. يرجى المحاولة لاحقاً.');
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    fetchPlans();
-
-    // Subscribe to settings updates
-    const unsubSettings = settingsService.subscribe((s) => {
-      setSettings(s);
-    });
-
-    // Subscribe to real-time updates from service layer
-    const unsubscribe = subscriptionsService.subscribe(({ plans: updatedPlans }) => {
-      const activeOnly = updatedPlans.filter((p) => p.isActive !== false);
-      setPlans(activeOnly);
-    });
-
-    return () => {
-      unsubSettings();
-      unsubscribe();
-    };
-  }, [defaultPlanId]);
-
-  // Handle plan selection
-  const handleSelectPlan = (plan: PricingPlan) => {
-    if (plan.priceMonthly === 0 && plan.priceYearly === 0) {
-      // Free plan selected: activate and direct to learning immediately
-      if (setActiveTab) {
-        setActiveTab('lesson');
-      } else if (onStartLesson) {
-        onStartLesson();
-      }
-      return;
-    }
-
-    setSelectedPlan(plan);
-    setCouponCode('');
-    setCouponMessage(null);
-    setAppliedDiscountPct(0);
-    setViewState('checkout');
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  };
-
-  // Coupon validation
-  const handleApplyCoupon = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!couponCode.trim()) return;
-
-    setIsValidatingCoupon(true);
-    setCouponMessage(null);
-
-    try {
-      const result = await subscriptionsService.validateCoupon(couponCode);
-      if (result.valid) {
-        setAppliedDiscountPct(result.discountPercentage);
-        setCouponMessage({ text: result.messageAr, isSuccess: true });
-      } else {
-        setAppliedDiscountPct(0);
-        setCouponMessage({ text: result.messageAr, isSuccess: false });
-      }
-    } catch {
-      setCouponMessage({ text: 'حدث خطأ أثناء فحص الكوبون.', isSuccess: false });
-    } finally {
-      setIsValidatingCoupon(false);
-    }
-  };
-
-  // Process payment submission
-  const handleProcessCheckout = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedPlan) return;
-
-    if (!fullName.trim() || !email.trim() || !phone.trim()) {
-      alert('يرجى تعبئة كافة بيانات المشترك الأساسية.');
-      return;
-    }
-
-    setIsProcessingPayment(true);
-    try {
-      const result = await paymentService.processCheckout({
-        planId: selectedPlan.id,
-        billingCycle: isYearly ? 'yearly' : 'monthly',
-        paymentMethod,
-        couponCode: appliedDiscountPct > 0 ? couponCode : undefined,
-        customerInfo: {
-          fullName,
-          email,
-          phoneNumber: phone,
-        },
-      });
-
-      if (result.success) {
-        setCheckoutResult(result);
-        setViewState('success');
-        window.scrollTo({ top: 0, behavior: 'smooth' });
-      } else {
-        alert(result.messageAr || 'تعذر إتمام الدفع. يرجى المحاولة مرة أخرى.');
-      }
-    } catch (err: any) {
-      alert('حدث خطأ غير متوقع أثناء معالجة الدفع: ' + (err?.message || ''));
-    } finally {
-      setIsProcessingPayment(false);
-    }
-  };
-
-  // Financial calculations with dynamic VAT
-  const calculatePricing = () => {
-    if (!selectedPlan) return { base: 0, discount: 0, vat: 0, total: 0 };
-
-    const base = isYearly ? selectedPlan.priceYearly * 12 : selectedPlan.priceMonthly;
-    const discount = appliedDiscountPct > 0 ? Math.round((base * appliedDiscountPct) / 100) : 0;
-    const subtotal = Math.max(0, base - discount);
-    
-    const vatRate = (settings.vatPercentage || 15) / 100;
-    const vat = Math.round(subtotal * vatRate);
-    const total = subtotal;
-
-    return { base, discount, vat, total };
-  };
-
-  const pricingMath = calculatePricing();
-
-  // Dynamic savings calculation
-  const popularPlan = plans.find((p) => p.isPopular) || plans.find((p) => p.priceMonthly > 0);
-  const calculatedSavingsPct = popularPlan && popularPlan.priceMonthly > 0
-    ? Math.round(((popularPlan.priceMonthly - popularPlan.priceYearly) / popularPlan.priceMonthly) * 100)
-    : 30;
+export const PricingView: React.FC<PricingViewProps> = ({ setActiveTab, onStartLesson, defaultPlanId }) => {
+  const {
+    plans, settings, isLoading, hasError, errorMessage, fetchPlans, isYearly, setIsYearly,
+    openFaqIndex, setOpenFaqIndex, selectedPlan, setSelectedPlan, viewState, setViewState,
+    paymentMethod, setPaymentMethod, fullName, setFullName, email, setEmail, phone, setPhone,
+    couponCode, setCouponCode, couponMessage, appliedDiscountPct, isValidatingCoupon,
+    cardNumber, setCardNumber, cardExpiry, setCardExpiry, cardCvv, setCardCvv,
+    isProcessingPayment, checkoutResult, handleSelectPlan, handleApplyCoupon,
+    handleProcessCheckout, pricingMath, calculatedSavingsPct,
+  } = usePricingController({ setActiveTab, onStartLesson, defaultPlanId });
 
   const faqs = settings.pricingFaqs && settings.pricingFaqs.length > 0
     ? settings.pricingFaqs.map((f) => ({ q: f.questionAr, a: f.answerAr }))
@@ -897,3 +719,5 @@ export const PricingView: React.FC<PricingViewProps> = ({
     </div>
   );
 };
+
+
