@@ -14,6 +14,7 @@ import { QuizzesView } from './components/QuizzesView';
 import { AITutorView } from './components/AITutorView';
 import { PricingView } from './components/PricingView';
 import { OwnerDashboard } from './components/owner/OwnerDashboard';
+import { AuthView } from './components/AuthView';
 import { authService, isSupabaseConfigured } from './services';
 
 export default function App() {
@@ -23,26 +24,39 @@ export default function App() {
   const [selectedCourse, setSelectedCourse] = useState<Course>(COURSES_DATA[0]);
   const [currentRole, setCurrentRole] = useState<UserRole | null>(null);
   const [authChecked, setAuthChecked] = useState(!isSupabaseConfigured);
+  const [signedIn, setSignedIn] = useState(false);
+  const [showAuth, setShowAuth] = useState(false);
 
   useEffect(() => {
     let mounted = true;
-    const loadRole = async () => {
+    const loadAuth = async () => {
       if (!isSupabaseConfigured) return;
       try {
         const session = await authService.getSession();
+        if (!mounted) return;
+        setSignedIn(!!session);
         const role = session?.user ? await authService.getRole(session.user.id) : null;
         if (mounted) setCurrentRole(role);
       } catch (error) {
-        console.error('Unable to load authenticated role', error);
-        if (mounted) setCurrentRole(null);
+        console.error('Unable to load authentication state', error);
+        if (mounted) { setSignedIn(false); setCurrentRole(null); }
       } finally {
         if (mounted) setAuthChecked(true);
       }
     };
-    void loadRole();
+    void loadAuth();
     const unsubscribe = authService.subscribe((session) => {
-      if (!session) { setCurrentRole(null); setAppMode('student'); return; }
-      void authService.getRole(session.user.id).then((role) => { if (mounted) setCurrentRole(role); });
+      if (!session) {
+        setSignedIn(false);
+        setCurrentRole(null);
+        setAppMode('student');
+        return;
+      }
+      setSignedIn(true);
+      setShowAuth(false);
+      void authService.getRole(session.user.id).then((role) => {
+        if (mounted) setCurrentRole(role);
+      });
     });
     return () => { mounted = false; unsubscribe(); };
   }, []);
@@ -53,22 +67,27 @@ export default function App() {
   const handleSelectCourse = (course: Course) => { if (course.isLocked) return; setSelectedCourse(course); setActiveTab('lesson'); };
 
   const canAccessOwner = currentRole === 'owner' || currentRole === 'admin';
+  const needsAuth = isSupabaseConfigured && !signedIn && ['dashboard', 'lesson', 'quizzes', 'vocab', 'ai-tutor', 'placement-test'].includes(activeTab);
   if (appMode === 'owner' && canAccessOwner) return <OwnerDashboard onSwitchToStudentView={() => setAppMode('student')} />;
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 font-sans flex flex-col justify-between selection:bg-indigo-500 selection:text-white" dir="rtl">
-      <Navbar activeTab={activeTab} setActiveTab={setActiveTab} stats={stats} onSwitchToOwnerView={authChecked && canAccessOwner ? () => setAppMode('owner') : undefined} />
+      <Navbar activeTab={activeTab} setActiveTab={setActiveTab} stats={stats} onAuth={() => setShowAuth(true)} onSwitchToOwnerView={authChecked && canAccessOwner ? () => setAppMode('owner') : undefined} />
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-4">
-        {activeTab === 'home' && <HomeView setActiveTab={setActiveTab} onSelectCourse={handleSelectCourse} onStartLesson={() => setActiveTab('lesson')} />}
-        {activeTab === 'levels' && <LevelsView setActiveTab={setActiveTab} />}
-        {activeTab === 'courses' && <CoursesView setActiveTab={setActiveTab} onSelectCourse={handleSelectCourse} />}
-        {activeTab === 'lesson' && <LessonView setActiveTab={setActiveTab} onLessonCompleted={handleLessonCompleted} />}
-        {activeTab === 'placement-test' && <PlacementTestView setActiveTab={setActiveTab} onPlacementComplete={handlePlacementComplete} />}
-        {activeTab === 'dashboard' && <DashboardView stats={stats} setActiveTab={setActiveTab} onStartLesson={() => setActiveTab('lesson')} />}
-        {activeTab === 'vocab' && <VocabView />}
-        {activeTab === 'quizzes' && <QuizzesView onEarnXP={handleEarnXP} />}
-        {activeTab === 'ai-tutor' && <AITutorView />}
-        {activeTab === 'pricing' && <PricingView setActiveTab={setActiveTab} onStartLesson={() => setActiveTab('lesson')} />}
+        {showAuth ? <AuthView onAuthenticated={() => setShowAuth(false)} /> : needsAuth ? <AuthView onAuthenticated={() => setShowAuth(false)} /> : (
+          <>
+            {activeTab === 'home' && <HomeView setActiveTab={setActiveTab} onSelectCourse={handleSelectCourse} onStartLesson={() => setActiveTab('lesson')} />}
+            {activeTab === 'levels' && <LevelsView setActiveTab={setActiveTab} />}
+            {activeTab === 'courses' && <CoursesView setActiveTab={setActiveTab} onSelectCourse={handleSelectCourse} />}
+            {activeTab === 'lesson' && <LessonView setActiveTab={setActiveTab} onLessonCompleted={handleLessonCompleted} />}
+            {activeTab === 'placement-test' && <PlacementTestView setActiveTab={setActiveTab} onPlacementComplete={handlePlacementComplete} />}
+            {activeTab === 'dashboard' && <DashboardView stats={stats} setActiveTab={setActiveTab} onStartLesson={() => setActiveTab('lesson')} />}
+            {activeTab === 'vocab' && <VocabView />}
+            {activeTab === 'quizzes' && <QuizzesView onEarnXP={handleEarnXP} />}
+            {activeTab === 'ai-tutor' && <AITutorView />}
+            {activeTab === 'pricing' && <PricingView setActiveTab={setActiveTab} onStartLesson={() => setActiveTab('lesson')} />}
+          </>
+        )}
       </main>
       <Footer setActiveTab={setActiveTab} />
     </div>
