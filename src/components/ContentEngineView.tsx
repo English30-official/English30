@@ -19,6 +19,7 @@ import {
   Download,
   Search,
 } from 'lucide-react';
+import { authenticatedJsonHeaders } from '../lib/api';
 
 interface ContentEngineViewProps {
   setActiveTab: (tab: ActiveTab) => void;
@@ -62,7 +63,7 @@ export const ContentEngineView: React.FC<ContentEngineViewProps> = ({
     try {
       const response = await fetch('/api/generate-lesson-pack', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: await authenticatedJsonHeaders(),
         body: JSON.stringify({
           topic: topicPrompt,
           level: selectedLevel,

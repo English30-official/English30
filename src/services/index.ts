@@ -2,6 +2,7 @@ export { settingsService, DEFAULT_PLATFORM_SETTINGS } from './settingsService';
 export { coursesService } from './coursesService';
 export { lessonsService } from './lessonsService';
 export { progressService } from './progressService';
+export { entitlementService } from './entitlementService';
 export { questionsService } from './questionsService';
 export { studentsService } from './studentsService';
 export { subscriptionsService } from './subscriptionsServiceSupabase';

@@ -1,8 +1,8 @@
-import { User, Session } from '@supabase/supabase-js';
+import { User, Session, AuthChangeEvent } from '@supabase/supabase-js';
 import { getSupabaseClient, isSupabaseConfigured } from '../lib/supabase';
 import { UserRole } from '../types';
 
-type AuthStateListener = (session: Session | null) => void;
+type AuthStateListener = (session: Session | null, event?: AuthChangeEvent) => void;
 
 class AuthService {
   private listeners = new Set<AuthStateListener>();
@@ -45,22 +45,21 @@ class AuthService {
     if (error) throw error;
   }
 
-  public async claimFirstOwner(): Promise<boolean> {
+  public async updatePassword(password: string) {
     if (!isSupabaseConfigured) throw new Error('Supabase is not configured.');
-    const session = await this.getSession();
-    if (!session) throw new Error('سجّل الدخول أولاً ثم فعّل حساب المالك.');
-    const { data: { url } } = { data: { url: `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/claim-first-owner` } };
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
-    });
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(payload.error || 'تعذر تفعيل حساب المالك.');
-    if (payload.claimed === true) {
-      this.roleCache.delete(session.user.id);
-      this.listeners.forEach((listener) => listener(session));
-    }
-    return payload.claimed === true;
+    const { data, error } = await getSupabaseClient().auth.updateUser({ password });
+    if (error) throw error;
+    return data;
+  }
+
+  public async isSuspended(userId: string): Promise<boolean> {
+    const { data, error } = await getSupabaseClient()
+      .from('profiles')
+      .select('is_suspended,is_active')
+      .eq('id', userId)
+      .maybeSingle();
+    if (error) throw error;
+    return !data || data.is_suspended === true || data.is_active === false;
   }
 
   public async getRole(userId?: string): Promise<UserRole | null> {
@@ -69,9 +68,10 @@ class AuthService {
     const id = userId ?? user?.id;
     if (!id) return null;
     if (this.roleCache.has(id)) return this.roleCache.get(id)!;
-    const { data, error } = await getSupabaseClient().from('user_roles').select('role').eq('user_id', id).order('created_at', { ascending: true }).limit(1).maybeSingle();
+    const { data, error } = await getSupabaseClient().from('user_roles').select('role').eq('user_id', id);
     if (error) throw error;
-    const role = (data?.role as UserRole | undefined) ?? 'student';
+    const roles = (data ?? []).map((row) => row.role as UserRole);
+    const role: UserRole = roles.includes('owner') ? 'owner' : roles.includes('admin') ? 'admin' : 'student';
     this.roleCache.set(id, role);
     return role;
   }
@@ -96,9 +96,9 @@ class AuthService {
     this.listeners.add(listener);
     if (!this.initialized && isSupabaseConfigured) {
       this.initialized = true;
-      getSupabaseClient().auth.onAuthStateChange((_event, session) => {
+      getSupabaseClient().auth.onAuthStateChange((event, session) => {
         if (session?.user) this.roleCache.delete(session.user.id);
-        this.listeners.forEach((l) => l(session));
+        this.listeners.forEach((l) => l(session, event));
       });
     }
     void this.getSession().then(listener).catch(() => listener(null));

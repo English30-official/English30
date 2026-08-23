@@ -11,6 +11,7 @@ import {
   RefreshCw,
   Lightbulb,
 } from 'lucide-react';
+import { authenticatedJsonHeaders } from '../lib/api';
 
 interface ChatMessage {
   id: string;
@@ -75,7 +76,7 @@ export const AITutorView: React.FC = () => {
     try {
       const response = await fetch('/api/ai-tutor', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: await authenticatedJsonHeaders(),
         body: JSON.stringify({ message: text, history: messages }),
       });
 
