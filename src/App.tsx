@@ -47,20 +47,17 @@ export default function App() {
     return () => { mounted = false; unsubscribe(); };
   }, []);
 
-  const handleLessonCompleted = (xpEarned: number) => {
-    setStats((prev) => ({ ...prev, xp: prev.xp + xpEarned, completedLessons: prev.completedLessons + 1, wordsLearned: Math.min(prev.totalWordsTarget, prev.wordsLearned + 4) }));
-  };
+  const handleLessonCompleted = (xpEarned: number) => setStats((prev) => ({ ...prev, xp: prev.xp + xpEarned, completedLessons: prev.completedLessons + 1, wordsLearned: Math.min(prev.totalWordsTarget, prev.wordsLearned + 4) }));
   const handleEarnXP = (xp: number) => setStats((prev) => ({ ...prev, xp: prev.xp + xp }));
   const handlePlacementComplete = (calcLevel: LevelCode) => setStats((prev) => ({ ...prev, level: calcLevel }));
   const handleSelectCourse = (course: Course) => { if (course.isLocked) return; setSelectedCourse(course); setActiveTab('lesson'); };
 
   const canAccessOwner = currentRole === 'owner' || currentRole === 'admin';
   if (appMode === 'owner' && canAccessOwner) return <OwnerDashboard onSwitchToStudentView={() => setAppMode('student')} />;
-  if (appMode === 'owner' && authChecked && !canAccessOwner) setAppMode('student');
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 font-sans flex flex-col justify-between selection:bg-indigo-500 selection:text-white" dir="rtl">
-      <Navbar activeTab={activeTab} setActiveTab={setActiveTab} stats={stats} onSwitchToOwnerView={canAccessOwner ? () => setAppMode('owner') : undefined} />
+      <Navbar activeTab={activeTab} setActiveTab={setActiveTab} stats={stats} onSwitchToOwnerView={authChecked && canAccessOwner ? () => setAppMode('owner') : undefined} />
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-4">
         {activeTab === 'home' && <HomeView setActiveTab={setActiveTab} onSelectCourse={handleSelectCourse} onStartLesson={() => setActiveTab('lesson')} />}
         {activeTab === 'levels' && <LevelsView setActiveTab={setActiveTab} />}
