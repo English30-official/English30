@@ -1,6 +1,6 @@
 import { Lesson, LessonBlock, ContentStatus, LevelCode } from '../types';
 import { SAMPLE_LESSON } from '../data/mockData';
-import { getSupabaseClient, isSupabaseConfigured } from '../lib/supabase';
+import { getSupabaseClient, isDevelopmentFallbackEnabled, isSupabaseConfigured } from '../lib/supabase';
 
 type LessonsListener = (lessons: Lesson[]) => void;
 
@@ -90,37 +90,54 @@ const hydrateMediaUrls = async (lesson: Lesson, rows: BlockRow[] = []): Promise<
 };
 
 class LessonsService {
-  private lessons: Lesson[] = fallbackLessons();
+  private lessons: Lesson[] = isDevelopmentFallbackEnabled ? fallbackLessons() : [];
   private listeners: Set<LessonsListener> = new Set();
 
   public async getLessons(courseId?: string, status?: ContentStatus): Promise<Lesson[]> {
     if (!isSupabaseConfigured) {
+      if (!isDevelopmentFallbackEnabled) throw new Error('Supabase is required for lesson content.');
       let list = [...this.lessons]; if (courseId) list = list.filter((l) => l.courseId === courseId); if (status) list = list.filter((l) => l.status === status); return list;
     }
-    let query = getSupabaseClient().from('lessons').select('*, lesson_content(content), lesson_blocks(*, media_assets(bucket_id, storage_path, file_name, mime_type))').order('sort_order', { ascending: true });
+    let query = getSupabaseClient().from('lessons').select('*').order('sort_order', { ascending: true });
     if (courseId) query = query.eq('course_id', courseId);
     if (status) query = query.eq('status', status);
     const { data, error } = await query;
     if (error) throw error;
-    const lessons = await Promise.all((data as Array<LessonRow & { lesson_content?: ContentRow[]; lesson_blocks?: BlockRow[] }>).map((r) => {
-      const blocks = r.lesson_blocks?.sort((a, b) => a.order_index - b.order_index) ?? [];
-      return hydrateMediaUrls(toLesson(r, r.lesson_content?.[0]?.content, blocks), blocks);
+    const lessons = await Promise.all((data as LessonRow[]).map(async (r) => {
+      const [{ data: content, error: contentError }, { data: blockData, error: blocksError }] = await Promise.all([
+        getSupabaseClient().rpc('get_safe_lesson_content', { p_lesson_id: r.id }),
+        getSupabaseClient().rpc('get_safe_lesson_blocks', { p_lesson_id: r.id }),
+      ]);
+      if (contentError) throw contentError; if (blocksError) throw blocksError;
+      const blocks = ((blockData as BlockRow[] | null) ?? []).sort((a, b) => a.order_index - b.order_index);
+      return hydrateMediaUrls(toLesson(r, (content as ContentRow['content'] | null) ?? undefined, blocks), blocks);
     }));
     this.lessons = lessons; this.notify(); return lessons;
   }
 
   public async getLessonById(id: string): Promise<Lesson | null> {
-    if (!isSupabaseConfigured) return this.lessons.find((l) => l.id === id) || null;
-    const { data, error } = await getSupabaseClient().from('lessons').select('*, lesson_content(content), lesson_blocks(*, media_assets(bucket_id, storage_path, file_name, mime_type))').eq('id', id).maybeSingle();
+    if (!isSupabaseConfigured) {
+      if (!isDevelopmentFallbackEnabled) throw new Error('Supabase is required for lesson content.');
+      return this.lessons.find((l) => l.id === id) || null;
+    }
+    const { data, error } = await getSupabaseClient().from('lessons').select('*').eq('id', id).maybeSingle();
     if (error) throw error;
     if (!data) return null;
-    const row = data as LessonRow & { lesson_content?: ContentRow[]; lesson_blocks?: BlockRow[] };
-    const blocks = row.lesson_blocks?.sort((a, b) => a.order_index - b.order_index) ?? [];
-    return hydrateMediaUrls(toLesson(row, row.lesson_content?.[0]?.content, blocks), blocks);
+    const row = data as LessonRow;
+    const [{ data: content, error: contentError }, { data: blockData, error: blocksError }] = await Promise.all([
+      getSupabaseClient().rpc('get_safe_lesson_content', { p_lesson_id: id }),
+      getSupabaseClient().rpc('get_safe_lesson_blocks', { p_lesson_id: id }),
+    ]);
+    if (contentError) throw contentError; if (blocksError) throw blocksError;
+    const blocks = ((blockData as BlockRow[] | null) ?? []).sort((a, b) => a.order_index - b.order_index);
+    return hydrateMediaUrls(toLesson(row, (content as ContentRow['content'] | null) ?? undefined, blocks), blocks);
   }
 
   public async createLesson(data: Omit<Lesson, 'id'>): Promise<Lesson> {
-    if (!isSupabaseConfigured) { const item = { ...data, id: `lesson-${Date.now()}` }; this.lessons = [item, ...this.lessons]; this.notify(); return item; }
+    if (!isSupabaseConfigured) {
+      if (!isDevelopmentFallbackEnabled) throw new Error('Supabase is required for lesson management.');
+      const item = { ...data, id: `lesson-${Date.now()}` }; this.lessons = [item, ...this.lessons]; this.notify(); return item;
+    }
     const row = {
       course_id: data.courseId, slug: `lesson-${Date.now()}`, title: data.titleEn || data.titleAr,
       title_ar: data.titleAr, title_en: data.titleEn, description: data.summaryAr, status: data.status || 'draft',
@@ -137,7 +154,10 @@ class LessonsService {
   }
 
   public async updateLesson(id: string, data: Partial<Lesson>): Promise<Lesson | null> {
-    if (!isSupabaseConfigured) { const idx = this.lessons.findIndex((l) => l.id === id); if (idx === -1) return null; this.lessons[idx] = { ...this.lessons[idx], ...data }; this.notify(); return this.lessons[idx]; }
+    if (!isSupabaseConfigured) {
+      if (!isDevelopmentFallbackEnabled) throw new Error('Supabase is required for lesson management.');
+      const idx = this.lessons.findIndex((l) => l.id === id); if (idx === -1) return null; this.lessons[idx] = { ...this.lessons[idx], ...data }; this.notify(); return this.lessons[idx];
+    }
     const row: Record<string, unknown> = {};
     if (data.courseId !== undefined) row.course_id = data.courseId;
     if (data.titleAr !== undefined) row.title_ar = data.titleAr;
@@ -163,7 +183,10 @@ class LessonsService {
   public async setLessonStatus(id: string, status: ContentStatus): Promise<Lesson | null> { return this.updateLesson(id, { status }); }
 
   public async deleteLesson(id: string): Promise<boolean> {
-    if (!isSupabaseConfigured) { const old = this.lessons.length; this.lessons = this.lessons.map((l) => l.id === id ? { ...l, status: 'archived' } : l); this.notify(); return old === this.lessons.length; }
+    if (!isSupabaseConfigured) {
+      if (!isDevelopmentFallbackEnabled) throw new Error('Supabase is required for lesson management.');
+      const old = this.lessons.length; this.lessons = this.lessons.map((l) => l.id === id ? { ...l, status: 'archived' } : l); this.notify(); return old !== this.lessons.length;
+    }
     const { error } = await getSupabaseClient().from('lessons').update({ status: 'archived', archived_at: new Date().toISOString() }).eq('id', id);
     if (error) throw error; await this.getLessons(); return true;
   }

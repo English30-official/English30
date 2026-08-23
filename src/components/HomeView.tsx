@@ -1,10 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { ActiveTab, Course, LevelCode, PricingPlan, PlatformSettings } from '../types';
-import {
-  COURSES_DATA,
-  LEVELS_DATA,
-} from '../data/mockData';
-import { subscriptionsService, settingsService } from '../services';
+import { LEVELS_DATA } from '../data/mockData';
+import { coursesService, subscriptionsService, settingsService } from '../services';
 import {
   Sparkles,
   ArrowLeft,
@@ -35,12 +32,16 @@ export const HomeView: React.FC<HomeViewProps> = ({
   onStartLesson,
 }) => {
   const [plans, setPlans] = useState<PricingPlan[]>([]);
+  const [courses, setCourses] = useState<Course[]>([]);
   const [settings, setSettings] = useState<PlatformSettings>(settingsService.getSettingsSync());
 
   useEffect(() => {
     async function loadPlans() {
-      const data = await subscriptionsService.getPlans();
-      setPlans(data.filter((p) => p.isActive !== false));
+      const [planData, courseData] = await Promise.all([
+        subscriptionsService.getPlans(), coursesService.getPublishedCourses(),
+      ]);
+      setPlans(planData.filter((p) => p.isActive !== false));
+      setCourses(courseData);
     }
     loadPlans();
 
@@ -104,6 +105,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
             </button>
           </div>
           {settings.heroImageUrl && <img src={settings.heroImageUrl} alt="" className="mt-8 w-full max-h-80 object-cover rounded-3xl border" />}
+          {(settings.homepageImages?.length ?? 0) > 0 && <div className="mt-6 grid grid-cols-2 sm:grid-cols-3 gap-3">{settings.homepageImages?.map((url, index) => <img key={`${url}-${index}`} src={url} alt="" loading="lazy" className="w-full h-32 object-cover rounded-2xl border"/>)}</div>}
 
           {/* Quick Highlight Stats */}
           <div className="pt-8 grid grid-cols-2 sm:grid-cols-4 gap-4 max-w-3xl mx-auto border-t border-slate-100 text-right sm:text-center">
@@ -307,7 +309,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          {COURSES_DATA.slice(0, 3).map((course) => (
+          {courses.slice(0, 3).map((course) => (
             <div
               key={course.id}
               className={`bg-white rounded-2xl overflow-hidden border transition-shadow flex flex-col justify-between ${
@@ -378,6 +380,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
             </div>
           ))}
         </div>
+        {courses.length === 0 && <div className="bg-white border rounded-2xl p-8 text-center text-sm text-slate-500">لا توجد دورات منشورة حاليًا.</div>}
       </section>
 
       {/* PLACEMENT TEST PROMO BANNER */}

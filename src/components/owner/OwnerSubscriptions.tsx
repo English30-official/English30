@@ -41,7 +41,7 @@ export const OwnerSubscriptions: React.FC = () => {
 
   useEffect(() => {
     async function load() {
-      const p = await subscriptionsService.getPlans();
+      const p = await subscriptionsService.getPlans(true);
       setPlans(p);
       const c = await subscriptionsService.getCoupons();
       setCoupons(c);
@@ -72,10 +72,10 @@ export const OwnerSubscriptions: React.FC = () => {
   };
 
   const handleDeleteCoupon = async (id: string, code: string) => {
-    if (!confirm(`هل أنت متأكد من حذف كود الخصم (${code}) نهائياً؟`)) return;
+    if (!confirm(`هل أنت متأكد من تعطيل كود الخصم (${code})؟`)) return;
     await subscriptionsService.deleteCoupon(id);
     setCoupons((prev) => prev.filter((c) => c.id !== id));
-    await auditService.logAction('DELETE_COUPON', 'coupons', code, `تم حذف كود الخصم ${code}`);
+    await auditService.logAction('DEACTIVATE_COUPON', 'coupons', code, `تم تعطيل كود الخصم ${code} مع الحفاظ على السجل التاريخي`);
   };
 
   const handleCreateCoupon = async (e: React.FormEvent) => {

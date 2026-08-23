@@ -64,7 +64,7 @@ export const OwnerOverview: React.FC<OwnerOverviewProps> = ({ onNavigateTab }) =
                 صلاحيات المالك الكاملة (Owner Role)
               </span>
               <span className="px-3 py-1 bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 rounded-full text-xs font-semibold">
-                Supabase Auth: قيد التوصيل في المرحلة 4
+                Supabase Auth وRLS متصلان
               </span>
             </div>
             <h1 className="text-2xl sm:text-3xl font-black text-white leading-tight">
@@ -106,10 +106,7 @@ export const OwnerOverview: React.FC<OwnerOverviewProps> = ({ onNavigateTab }) =
           </div>
           <div className="flex items-baseline gap-2">
             <span className="text-3xl font-black text-slate-900">{stats.totalStudents}</span>
-            <span className="text-xs font-bold text-emerald-600 flex items-center gap-0.5">
-              <TrendingUp className="w-3.5 h-3.5" />
-              +14% هذا الأسبوع
-            </span>
+            <span className="text-xs font-bold text-emerald-600 flex items-center gap-0.5"><TrendingUp className="w-3.5 h-3.5"/>بيانات حية</span>
           </div>
           <p className="text-xs text-slate-500">من مختلف الدول العربية</p>
         </div>

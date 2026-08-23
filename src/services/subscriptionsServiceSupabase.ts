@@ -1,19 +1,173 @@
-import { PricingPlan, CouponItem, CouponValidationResult } from '../types';
+import { CouponItem, CouponValidationResult, PricingPlan } from '../types';
 import { getSupabaseClient, isSupabaseConfigured } from '../lib/supabase';
 
-type Listener=(data:{plans:PricingPlan[];coupons:CouponItem[]})=>void;
+type Listener = (data: { plans: PricingPlan[]; coupons: CouponItem[] }) => void;
+
+type PlanFeatures = {
+  items?: string[]; nameEn?: string; badgeAr?: string; isPopular?: boolean; buttonTextAr?: string;
+  originalPriceMonthly?: number; originalPriceYearly?: number;
+};
+
+const mapPlan = (row: any): PricingPlan => {
+  const prices = row.plan_prices ?? [];
+  const monthly = prices.find((price: any) => price.interval === 'month' && price.is_active);
+  const yearly = prices.find((price: any) => price.interval === 'year' && price.is_active);
+  const metadata: PlanFeatures = Array.isArray(row.features) ? { items: row.features } : (row.features ?? {});
+  return {
+    id: row.id,
+    nameAr: row.name,
+    nameEn: metadata.nameEn || row.name,
+    badgeAr: metadata.badgeAr,
+    descriptionAr: row.description ?? '',
+    featuresAr: metadata.items ?? [],
+    priceMonthly: Number(monthly?.amount ?? 0),
+    priceYearly: Number(yearly?.amount ?? 0),
+    originalPriceMonthly: metadata.originalPriceMonthly,
+    originalPriceYearly: metadata.originalPriceYearly,
+    isPopular: metadata.isPopular,
+    buttonTextAr: metadata.buttonTextAr || 'اشترك الآن',
+    isActive: row.is_active,
+    currency: monthly?.currency ?? yearly?.currency ?? 'SAR',
+  };
+};
+
+const mapCoupon = (row: any): CouponItem => ({
+  id: row.id, code: row.code,
+  discountPercentage: row.discount_type === 'percentage' ? Number(row.discount_value) : 0,
+  maxRedemptions: row.max_redemptions ?? 0,
+  timesRedeemed: row.redeemed_count,
+  expiresAt: row.expires_at ?? undefined,
+  isActive: row.is_active,
+});
+
 class SupabaseSubscriptionsService {
- private plans:PricingPlan[]=[]; private coupons:CouponItem[]=[]; private listeners=new Set<Listener>();
- async getPlans(){if(!isSupabaseConfigured)return [];const {data,error}=await getSupabaseClient().from('plans').select('*,plan_prices(*)').eq('is_active',true).order('sort_order');if(error)throw error;this.plans=(data??[] as any[]).map((p:any)=>{const prices=p.plan_prices??[];const m=prices.find((x:any)=>x.interval==='month'&&x.is_active);const y=prices.find((x:any)=>x.interval==='year'&&x.is_active);return {id:p.id,nameAr:p.name,nameEn:p.name,descriptionAr:p.description??'',featuresAr:Array.isArray(p.features)?p.features:[],priceMonthly:Number(m?.amount??0),priceYearly:Number(y?.amount??0),buttonTextAr:'اشترك الآن',isActive:p.is_active,currency:m?.currency??'SAR'};});this.notify();return [...this.plans];}
- async getPlanById(id:string){return (await this.getPlans()).find(p=>p.id===id);}
- async updatePlan(id:string,u:Partial<PricingPlan>){if(!isSupabaseConfigured)throw new Error('Supabase is required.');const payload:any={};if(u.nameAr!==undefined)payload.name=u.nameAr;if(u.descriptionAr!==undefined)payload.description=u.descriptionAr;if(u.isActive!==undefined)payload.is_active=u.isActive;const {error}=await getSupabaseClient().from('plans').update(payload).eq('id',id);if(error)throw error;await this.getPlans();return this.plans.find(p=>p.id===id)??null;}
- async getCoupons(){if(!isSupabaseConfigured)return [];const {data,error}=await getSupabaseClient().from('coupons').select('*').order('created_at',{ascending:false});if(error)throw error;this.coupons=(data??[] as any[]).map((c:any)=>({id:c.id,code:c.code,discountPercentage:c.discount_type==='percentage'?Number(c.discount_value):0,maxRedemptions:c.max_redemptions,timesRedeemed:c.redeemed_count,expiresAt:c.expires_at??undefined,isActive:c.is_active}));this.notify();return [...this.coupons];}
- async validateCoupon(raw:string):Promise<CouponValidationResult>{const code=raw.trim().toUpperCase();if(!code)return {valid:false,discountPercentage:0,messageAr:'الرجاء إدخال كود الخصم.'};const {data,error}=await getSupabaseClient().rpc('validate_coupon',{p_code:code}).maybeSingle();if(error)throw error;if(!data)return {valid:false,discountPercentage:0,messageAr:'كود الخصم غير صحيح أو غير متاح.'};const row=data as {id:string;code:string;discount_percentage:number;max_redemptions:number|null;redeemed_count:number;expires_at:string|null};const c={id:row.id,code:row.code,discountPercentage:Number(row.discount_percentage),maxRedemptions:row.max_redemptions??0,timesRedeemed:row.redeemed_count,expiresAt:row.expires_at??undefined,isActive:true};return {valid:true,discountPercentage:c.discountPercentage,messageAr:`تم تطبيق خصم ${c.discountPercentage}% بنجاح! 🎉`,coupon:c};}
- async createCoupon(d:Omit<CouponItem,'id'|'timesRedeemed'>){const {data,error}=await getSupabaseClient().from('coupons').insert({code:d.code.trim().toUpperCase(),discount_type:'percentage',discount_value:d.discountPercentage,max_redemptions:d.maxRedemptions,expires_at:d.expiresAt??null,is_active:d.isActive}).select('*').single();if(error)throw error;await this.getCoupons();return {id:data.id,code:data.code,discountPercentage:Number(data.discount_value),maxRedemptions:data.max_redemptions,timesRedeemed:data.redeemed_count,expiresAt:data.expires_at??undefined,isActive:data.is_active};}
- async deleteCoupon(id:string){const {error}=await getSupabaseClient().from('coupons').delete().eq('id',id);if(error)throw error;await this.getCoupons();return true;}
- async toggleCouponStatus(id:string){const c=(await this.getCoupons()).find(x=>x.id===id);if(!c)return null;const {error}=await getSupabaseClient().from('coupons').update({is_active:!c.isActive}).eq('id',id);if(error)throw error;await this.getCoupons();return this.coupons.find(x=>x.id===id)??null;}
- async getFinancialMetrics(){const [{data:s,error:se},{data:p,error:pe}]=await Promise.all([getSupabaseClient().from('subscriptions').select('status'),getSupabaseClient().from('payments').select('amount,status')]);if(se)throw se;if(pe)throw pe;const paid=(p??[]).filter((x:any)=>x.status==='paid');const active=(s??[]).filter((x:any)=>x.status==='active').length;const revenue=paid.reduce((n:number,x:any)=>n+Number(x.amount||0),0);return {monthlyRecurringRevenueSAR:0,annualRevenueRunRateSAR:0,averageRevenuePerUserSAR:active?Math.round(revenue/active):0,activePaidSubscribers:active,totalSuccessfulTransactions:paid.length};}
- subscribe(l:Listener){this.listeners.add(l);void Promise.all([this.getPlans(),this.getCoupons()]).then(()=>l({plans:[...this.plans],coupons:[...this.coupons]})).catch(console.error);return()=>this.listeners.delete(l);}
- private notify(){this.listeners.forEach(l=>l({plans:[...this.plans],coupons:[...this.coupons]}));}
+  private plans: PricingPlan[] = [];
+  private coupons: CouponItem[] = [];
+  private listeners = new Set<Listener>();
+
+  async getPlans(includeInactive = false): Promise<PricingPlan[]> {
+    if (!isSupabaseConfigured) return [];
+    let query = getSupabaseClient().from('plans').select('*,plan_prices(*)').order('sort_order');
+    if (!includeInactive) query = query.eq('is_active', true);
+    const { data, error } = await query;
+    if (error) throw error;
+    this.plans = (data ?? []).map(mapPlan);
+    this.notify();
+    return [...this.plans];
+  }
+
+  async getPlanById(id: string): Promise<PricingPlan | undefined> {
+    return (await this.getPlans()).find((plan) => plan.id === id);
+  }
+
+  async updatePlan(id: string, updates: Partial<PricingPlan>): Promise<PricingPlan | null> {
+    if (!isSupabaseConfigured) throw new Error('Supabase is required.');
+    const { error } = await getSupabaseClient().rpc('manage_subscription_plan', {
+      p_plan_id: id,
+      p_payload: {
+        nameAr: updates.nameAr,
+        nameEn: updates.nameEn,
+        descriptionAr: updates.descriptionAr,
+        featuresAr: updates.featuresAr,
+        badgeAr: updates.badgeAr,
+        isPopular: updates.isPopular,
+        buttonTextAr: updates.buttonTextAr,
+        isActive: updates.isActive,
+        priceMonthly: updates.priceMonthly,
+        priceYearly: updates.priceYearly,
+        originalPriceMonthly: updates.originalPriceMonthly,
+        originalPriceYearly: updates.originalPriceYearly,
+        currency: updates.currency || 'SAR',
+      },
+    });
+    if (error) throw error;
+    await this.getPlans(true);
+    return this.plans.find((plan) => plan.id === id) ?? null;
+  }
+
+  async getCoupons(): Promise<CouponItem[]> {
+    if (!isSupabaseConfigured) return [];
+    const { data, error } = await getSupabaseClient().from('coupons').select('*').order('created_at', { ascending: false });
+    if (error) throw error;
+    this.coupons = (data ?? []).map(mapCoupon);
+    this.notify();
+    return [...this.coupons];
+  }
+
+  async validateCoupon(raw: string): Promise<CouponValidationResult> {
+    const code = raw.trim().toUpperCase();
+    if (!code) return { valid: false, discountPercentage: 0, messageAr: 'الرجاء إدخال كود الخصم.' };
+    const { data, error } = await getSupabaseClient().rpc('validate_coupon', { p_code: code }).maybeSingle();
+    if (error) throw error;
+    if (!data) return { valid: false, discountPercentage: 0, messageAr: 'كود الخصم غير صحيح أو غير متاح.' };
+    const row = data as { id: string; code: string; discount_percentage: number; max_redemptions: number | null; redeemed_count: number; expires_at: string | null };
+    const coupon = mapCoupon({ ...row, discount_type: 'percentage', discount_value: row.discount_percentage, is_active: true });
+    return { valid: true, discountPercentage: coupon.discountPercentage, messageAr: `تم تطبيق خصم ${coupon.discountPercentage}% بنجاح! 🎉`, coupon };
+  }
+
+  async createCoupon(input: Omit<CouponItem, 'id' | 'timesRedeemed'>): Promise<CouponItem> {
+    const { data, error } = await getSupabaseClient().from('coupons').insert({
+      code: input.code.trim().toUpperCase(), discount_type: 'percentage', discount_value: input.discountPercentage,
+      max_redemptions: input.maxRedemptions || null, expires_at: input.expiresAt ?? null, is_active: input.isActive,
+    }).select('*').single();
+    if (error) throw error;
+    await this.getCoupons();
+    return mapCoupon(data);
+  }
+
+  async deleteCoupon(id: string): Promise<boolean> {
+    const { error } = await getSupabaseClient().from('coupons').update({ is_active: false }).eq('id', id);
+    if (error) throw error;
+    await this.getCoupons();
+    return true;
+  }
+
+  async toggleCouponStatus(id: string): Promise<CouponItem | null> {
+    const coupon = (await this.getCoupons()).find((item) => item.id === id);
+    if (!coupon) return null;
+    const { error } = await getSupabaseClient().from('coupons').update({ is_active: !coupon.isActive }).eq('id', id);
+    if (error) throw error;
+    await this.getCoupons();
+    return this.coupons.find((item) => item.id === id) ?? null;
+  }
+
+  async getFinancialMetrics() {
+    const client = getSupabaseClient();
+    const [subscriptionsResult, paymentsResult] = await Promise.all([
+      client.from('subscriptions').select('status,plans(plan_prices(amount,interval,is_active))').eq('status', 'active'),
+      client.from('payments').select('amount,status').eq('status', 'paid'),
+    ]);
+    if (subscriptionsResult.error) throw subscriptionsResult.error;
+    if (paymentsResult.error) throw paymentsResult.error;
+    const active = subscriptionsResult.data ?? [];
+    const monthlyRecurringRevenueSAR = Math.round(active.reduce((total, subscription: any) => {
+      const plan = Array.isArray(subscription.plans) ? subscription.plans[0] : subscription.plans;
+      const prices = (plan?.plan_prices ?? []).filter((price: any) => price.is_active);
+      const monthly = prices.find((price: any) => price.interval === 'month');
+      const yearly = prices.find((price: any) => price.interval === 'year');
+      return total + Number(monthly?.amount ?? (yearly ? Number(yearly.amount) / 12 : 0));
+    }, 0));
+    return {
+      monthlyRecurringRevenueSAR,
+      annualRevenueRunRateSAR: monthlyRecurringRevenueSAR * 12,
+      averageRevenuePerUserSAR: active.length ? Math.round(monthlyRecurringRevenueSAR / active.length) : 0,
+      activePaidSubscribers: active.length,
+      totalSuccessfulTransactions: (paymentsResult.data ?? []).length,
+    };
+  }
+
+  subscribe(listener: Listener): () => void {
+    this.listeners.add(listener);
+    void Promise.all([this.getPlans(), this.getCoupons()])
+      .then(() => listener({ plans: [...this.plans], coupons: [...this.coupons] }))
+      .catch(console.error);
+    return () => this.listeners.delete(listener);
+  }
+
+  private notify() {
+    const snapshot = { plans: [...this.plans], coupons: [...this.coupons] };
+    this.listeners.forEach((listener) => listener(snapshot));
+  }
 }
-export const subscriptionsService=new SupabaseSubscriptionsService();
+
+export const subscriptionsService = new SupabaseSubscriptionsService();

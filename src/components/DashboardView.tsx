@@ -48,7 +48,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
             <div className="space-y-1">
               <div className="flex items-center gap-2">
-                <h1 className="text-xl sm:text-3xl font-black text-slate-800">مرحباً بك، محمد العتيبي</h1>
+                <h1 className="text-xl sm:text-3xl font-black text-slate-800">مرحباً بك في لوحة تقدمك</h1>
                 <span className="px-2.5 py-0.5 bg-emerald-100 text-emerald-700 rounded-md font-bold text-xs">
                   طالب نَشِط
                 </span>
@@ -60,7 +60,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 </button>
               </div>
               <p className="text-xs sm:text-sm text-slate-500 font-medium">
-                مستواك الحالي: <strong className="text-indigo-600 font-black">A1 - المبتدئين</strong> | المنهج النشط: أساسيات الإنجليزية للمبتدئين
+                مستواك الحالي: <strong className="text-indigo-600 font-black">{stats.level}</strong> | البيانات معروضة من سجل تقدم حسابك
               </p>
             </div>
           </div>
@@ -88,13 +88,13 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         {/* Level Progression Gauge Bar */}
         <div className="space-y-2 pt-2 border-t border-slate-100">
           <div className="flex justify-between text-xs font-bold text-slate-600">
-            <span>التقدم نحو المستوى B2 (فوق المتوسط)</span>
-            <span className="text-indigo-600">65% من متطلبات B1 صُنِّفت</span>
+            <span>تقدم الدروس المنشورة المتاحة</span>
+            <span className="text-indigo-600">{stats.totalLessons ? Math.round((stats.completedLessons / stats.totalLessons) * 100) : 0}%</span>
           </div>
           <div className="w-full bg-slate-100 h-3 rounded-full overflow-hidden p-0.5 border border-slate-200">
             <div
               className="bg-indigo-600 h-full rounded-full transition-all duration-500"
-              style={{ width: '65%' }}
+              style={{ width: `${stats.totalLessons ? Math.round((stats.completedLessons / stats.totalLessons) * 100) : 0}%` }}
             />
           </div>
         </div>
@@ -108,10 +108,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             <span>الدرس التالي المقترح لك اليوم</span>
           </div>
           <h2 className="text-xl sm:text-2xl font-black text-slate-800">
-            الفرق بين المضارع البسيط والمستمر
+            تابع الدورة المنشورة التي اخترتها
           </h2>
           <p className="text-xs sm:text-sm text-slate-600 leading-relaxed">
-            استكمل 15 دقيقة فقط لتزيد حصيلتك بـ 4 مفردات جديدة وتتجاوز خطأً شائعاً في قواعد B1.
+            افتح الدرس التالي المتاح، وسيُحفظ وقت الدراسة والإكمال في حسابك تلقائيًا.
           </p>
         </div>
 
@@ -120,7 +120,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           className="shrink-0 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold px-8 py-4 rounded-xl text-sm shadow-md shadow-indigo-200 transition-transform hover:scale-105 active:scale-95 flex items-center gap-2 cursor-pointer"
         >
           <Play className="w-4 h-4 fill-white" />
-          <span>متابعة الدرس الآن (+50 XP)</span>
+            <span>متابعة الدرس الآن</span>
         </button>
       </div>
 
@@ -139,7 +139,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             <span className="text-xs font-normal text-slate-400 mr-1">/ {stats.totalWordsTarget}</span>
           </div>
           <div className="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden">
-            <div className="bg-indigo-600 h-full" style={{ width: '68%' }} />
+            <div className="bg-indigo-600 h-full" style={{ width: `${stats.totalWordsTarget ? Math.min(100, Math.round((stats.wordsLearned / stats.totalWordsTarget) * 100)) : 0}%` }} />
           </div>
         </div>
 
@@ -155,7 +155,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             <span className="text-xs font-normal text-slate-400 mr-1">/ {stats.totalLessons}</span>
           </div>
           <div className="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden">
-            <div className="bg-emerald-500 h-full" style={{ width: '30%' }} />
+            <div className="bg-emerald-500 h-full" style={{ width: `${stats.totalLessons ? Math.min(100, Math.round((stats.completedLessons / stats.totalLessons) * 100)) : 0}%` }} />
           </div>
         </div>
 
@@ -169,7 +169,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           <div className="text-2xl sm:text-3xl font-black text-slate-900 font-english">
             {stats.averageScore}%
           </div>
-          <p className="text-[11px] text-emerald-600 font-bold">ممتاز (أداء مرتفع)</p>
+          <p className="text-[11px] text-slate-500 font-bold">متوسط نتائج الاختبارات الرسمية</p>
         </div>
 
         <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs space-y-2">
@@ -196,7 +196,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </div>
           <div className="flex items-center gap-1 text-xs font-bold text-indigo-600 bg-indigo-50 px-3 py-1.5 rounded-xl">
             <TrendingUp className="w-4 h-4" />
-            <span>المجموع: 245 دقيقة</span>
+            <span>المجموع: {stats.studyTimeMinutesThisWeek.reduce((sum, item) => sum + item.minutes, 0)} دقيقة</span>
           </div>
         </div>
 

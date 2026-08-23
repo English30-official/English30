@@ -1,7 +1,7 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { VocabItem, LevelCode } from '../types';
-import { VOCABULARY_DATABASE } from '../data/mockData';
 import { playAudioItem } from '../lib/speech';
+import { lessonsService } from '../services';
 import {
   Search,
   Volume2,
@@ -15,7 +15,9 @@ import {
 } from 'lucide-react';
 
 export const VocabView: React.FC = () => {
-  const [vocabList, setVocabList] = useState<VocabItem[]>(VOCABULARY_DATABASE);
+  const [vocabList, setVocabList] = useState<VocabItem[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('ALL');
   const [selectedLevel, setSelectedLevel] = useState<string>('ALL');
@@ -25,7 +27,31 @@ export const VocabView: React.FC = () => {
   const [flashcardIndex, setFlashcardIndex] = useState(0);
   const [isFlipped, setIsFlipped] = useState(false);
 
-  const categories = ['ALL', 'General', 'Education', 'Business', 'Travel', 'Advanced'];
+  useEffect(() => {
+    let active = true;
+    void lessonsService.getLessons(undefined, 'published')
+      .then((lessons) => {
+        if (!active) return;
+        const uniqueItems = new Map<string, VocabItem>();
+        lessons.flatMap((lesson) => lesson.vocabList ?? []).forEach((item) => {
+          uniqueItems.set(item.id, item);
+        });
+        setVocabList([...uniqueItems.values()]);
+        setLoadError('');
+      })
+      .catch(() => {
+        if (active) setLoadError('تعذر تحميل المفردات المنشورة حالياً.');
+      })
+      .finally(() => {
+        if (active) setIsLoading(false);
+      });
+    return () => { active = false; };
+  }, []);
+
+  const categories = useMemo(
+    () => ['ALL', ...Array.from(new Set(vocabList.map((item) => item.category).filter(Boolean)))],
+    [vocabList],
+  );
   const levels = ['ALL', 'A1', 'A2', 'B1', 'B2', 'C1'];
 
   const filteredVocab = vocabList.filter((item) => {
@@ -204,6 +230,9 @@ export const VocabView: React.FC = () => {
       </div>
 
       {/* VOCABULARY CARDS LIST */}
+      {isLoading && <div className="bg-white border border-slate-200 rounded-2xl p-8 text-center text-slate-500">جارٍ تحميل المفردات المنشورة...</div>}
+      {!isLoading && loadError && <div className="bg-rose-50 border border-rose-200 rounded-2xl p-6 text-center text-rose-700 font-bold">{loadError}</div>}
+      {!isLoading && !loadError && vocabList.length === 0 && <div className="bg-white border border-slate-200 rounded-2xl p-8 text-center text-slate-500">لا توجد مفردات منشورة ومتاحة لحسابك حالياً.</div>}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {filteredVocab.map((item) => (
           <div

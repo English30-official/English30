@@ -387,6 +387,16 @@ export const OwnerSettings: React.FC = () => {
                 dir="ltr"
               />
             </div>
+            <div>
+              <label className="text-xs font-bold text-slate-700 block mb-1">رابط حساب Instagram</label>
+              <input
+                type="text"
+                value={settings.instagramUrl || ''}
+                onChange={(e) => setSettings({ ...settings, instagramUrl: e.target.value })}
+                className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-english"
+                dir="ltr"
+              />
+            </div>
           </div>
         </div>
 
@@ -573,4 +583,3 @@ export const OwnerSettings: React.FC = () => {
     </div>
   );
 };
-

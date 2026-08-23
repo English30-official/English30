@@ -20,6 +20,27 @@ const mapCertificate = (row: any): CertificateRecord => ({
   revokedAt: row.revoked_at ?? undefined, revocationReason: row.revocation_reason ?? undefined,
 });
 
+const hydrateCertificateAssets = async (records: CertificateRecord[]): Promise<CertificateRecord[]> => {
+  const ids = [...new Set(records.flatMap((record) => [record.template.logoAssetId, record.template.signatureAssetId]).filter((id): id is string => typeof id === 'string' && id.length > 0))];
+  if (!ids.length) return records;
+  const client = getSupabaseClient();
+  const { data, error } = await client.from('media_assets').select('id,bucket_id,storage_path').in('id', ids);
+  if (error) throw error;
+  const urls = new Map<string, string>();
+  await Promise.all((data ?? []).map(async (asset) => {
+    const { data: signed, error: signError } = await client.storage.from(asset.bucket_id).createSignedUrl(asset.storage_path, 3600);
+    if (!signError && signed?.signedUrl) urls.set(asset.id, signed.signedUrl);
+  }));
+  return records.map((record) => ({
+    ...record,
+    template: {
+      ...record.template,
+      logoUrl: typeof record.template.logoAssetId === 'string' ? urls.get(record.template.logoAssetId) : undefined,
+      signatureUrl: typeof record.template.signatureAssetId === 'string' ? urls.get(record.template.signatureAssetId) : undefined,
+    },
+  }));
+};
+
 class CertificateService {
   async listSettings(): Promise<CertificateSettings[]> {
     const { data, error } = await getSupabaseClient().from('course_certificate_settings').select('*');
@@ -45,7 +66,7 @@ class CertificateService {
   async listAll(): Promise<CertificateRecord[]> {
     const { data, error } = await getSupabaseClient().from('certificates').select('*').order('issued_at', { ascending: false });
     if (error) throw error;
-    return (data ?? []).map(mapCertificate);
+    return hydrateCertificateAssets((data ?? []).map(mapCertificate));
   }
 
   async listMine(): Promise<CertificateRecord[]> {
@@ -53,7 +74,7 @@ class CertificateService {
     if (!userId) return [];
     const { data, error } = await getSupabaseClient().from('certificates').select('*').eq('user_id', userId).order('issued_at', { ascending: false });
     if (error) throw error;
-    return (data ?? []).map(mapCertificate);
+    return hydrateCertificateAssets((data ?? []).map(mapCertificate));
   }
 
   async revoke(id: string, reason: string): Promise<boolean> {

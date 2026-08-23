@@ -119,10 +119,26 @@ as $$
     );
 $$;
 
+create or replace function private.is_staff_user(p_user_id uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select exists (
+    select 1 from public.user_roles ur
+    where ur.user_id=p_user_id
+      and ur.role in ('admin'::public.app_role,'owner'::public.app_role)
+  );
+$$;
+
 revoke all on function private.has_role(public.app_role) from public, anon, authenticated;
 revoke all on function private.has_permission(text) from public, anon, authenticated;
+revoke all on function private.is_staff_user(uuid) from public, anon, authenticated;
 grant execute on function private.has_role(public.app_role) to authenticated;
 grant execute on function private.has_permission(text) to authenticated;
+grant execute on function private.is_staff_user(uuid) to authenticated;
 
 create or replace function public.check_permission(p_permission text)
 returns boolean
@@ -133,6 +149,47 @@ set search_path = ''
 as $$ select private.has_permission(p_permission); $$;
 revoke all on function public.check_permission(text) from public, anon, authenticated;
 grant execute on function public.check_permission(text) to authenticated;
+
+-- Preserve the Phase 1 entitlement decision while making its staff bypass
+-- honor granular RBAC. Owners always bypass; admins do so through the default
+-- content.manage grant unless the owner has explicitly denied that permission.
+create or replace function private.lesson_entitlement_reason(p_lesson_id uuid)
+returns text
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+declare
+  v_user_id uuid := (select auth.uid());
+  v_is_free boolean;
+  v_is_published boolean;
+  v_staff boolean := private.has_role('owner'::public.app_role) or private.has_permission('content.manage');
+begin
+  select
+    (l.is_free or c.is_free),
+    (l.status='published'::public.lesson_status and c.status='published'::public.course_status)
+  into v_is_free,v_is_published
+  from public.lessons l join public.courses c on c.id=l.course_id
+  where l.id=p_lesson_id;
+
+  if not found or not v_is_published then
+    return case when v_user_id is not null and v_staff then 'staff' else 'not_available' end;
+  end if;
+  if v_user_id is not null and not private.current_user_is_active() then return 'suspended'; end if;
+  if v_user_id is not null and v_staff then return 'staff'; end if;
+  if v_is_free then return 'free_preview'; end if;
+  if v_user_id is null then return 'authentication_required'; end if;
+  if exists (
+    select 1 from public.subscriptions s join public.plans p on p.id=s.plan_id and p.is_active
+    where s.user_id=v_user_id and s.status='active'::public.subscription_status
+      and s.starts_at<=now() and (s.ends_at is null or s.ends_at>now())
+  ) then return 'active_subscription'; end if;
+  return 'subscription_required';
+end;
+$$;
+revoke all on function private.lesson_entitlement_reason(uuid) from public, anon, authenticated;
+grant execute on function private.lesson_entitlement_reason(uuid) to anon, authenticated;
 
 -- ---------------------------------------------------------------------------
 -- Central settings, pages, feature flags, lifecycle metadata
@@ -355,10 +412,17 @@ begin
   -- The service-role first-owner Edge Function has no auth.uid() and remains
   -- governed by the existing atomic bootstrap trigger. Interactive staff role
   -- changes require the dedicated owner-only permission.
+  if (select auth.uid()) is null and current_user not in ('service_role','postgres') then
+    raise exception using errcode = '42501', message = 'Authenticated role management required';
+  end if;
   if (select auth.uid()) is not null and not private.has_permission('roles.manage') then
     raise exception using errcode = '42501', message = 'Role management permission required';
   end if;
-  if tg_op = 'DELETE' and old.role = 'owner'::public.app_role then
+  if old.role = 'owner'::public.app_role and (
+    tg_op = 'DELETE'
+    or new.role is distinct from old.role
+    or new.user_id is distinct from old.user_id
+  ) then
     raise exception using errcode = '42501', message = 'The owner role cannot be removed';
   end if;
   return case when tg_op = 'DELETE' then old else new end;
@@ -369,6 +433,35 @@ drop trigger if exists guard_role_changes on public.user_roles;
 create trigger guard_role_changes before insert or update or delete on public.user_roles
 for each row execute function private.guard_role_changes();
 revoke all on function private.guard_role_changes() from public, anon, authenticated;
+
+-- A delegated student manager must never be able to disable or delete the
+-- owner account. Keeping this invariant in the database also protects against
+-- accidental actions from the Owner CMS itself.
+create or replace function private.guard_owner_profile_status()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare v_profile_id uuid := case when tg_op='DELETE' then old.id else new.id end;
+begin
+  if exists (
+    select 1 from public.user_roles ur
+    where ur.user_id=v_profile_id and ur.role='owner'::public.app_role
+  ) and (
+    tg_op='DELETE'
+    or not coalesce(new.is_active,false)
+    or coalesce(new.is_suspended,false)
+  ) then
+    raise exception using errcode='42501', message='The owner account cannot be suspended, deactivated, or deleted';
+  end if;
+  return case when tg_op='DELETE' then old else new end;
+end;
+$$;
+drop trigger if exists guard_owner_profile_status on public.profiles;
+create trigger guard_owner_profile_status before update or delete on public.profiles
+for each row execute function private.guard_owner_profile_status();
+revoke all on function private.guard_owner_profile_status() from public, anon, authenticated;
 
 create or replace function private.guard_course_publication()
 returns trigger
@@ -395,6 +488,111 @@ begin
   end loop;
 end $$;
 revoke all on function private.guard_course_publication() from public, anon, authenticated;
+
+-- Legacy lesson JSON can contain old client-scored quiz answer keys. Keep the
+-- full document staff-only and expose a compatibility RPC that removes those
+-- keys for entitled students/free previews.
+create or replace function public.get_safe_lesson_content(p_lesson_id uuid)
+returns jsonb
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+declare v_content jsonb;
+begin
+  if not private.can_access_lesson(p_lesson_id) then
+    raise exception using errcode='42501', message='Lesson content access denied';
+  end if;
+  select lc.content into v_content from public.lesson_content lc where lc.lesson_id=p_lesson_id;
+  if v_content is null then return '{}'::jsonb; end if;
+  if private.has_permission('content.manage') then return v_content; end if;
+  return v_content - 'quizQuestions' - 'finalMiniTest';
+end;
+$$;
+revoke all on function public.get_safe_lesson_content(uuid) from public, anon, authenticated;
+grant execute on function public.get_safe_lesson_content(uuid) to anon, authenticated;
+
+create or replace function private.strip_assessment_answers(p_value jsonb)
+returns jsonb
+language plpgsql
+immutable
+set search_path = ''
+as $$
+begin
+  if p_value is null then return null; end if;
+  if jsonb_typeof(p_value)='array' then
+    return coalesce((select jsonb_agg(private.strip_assessment_answers(value)) from jsonb_array_elements(p_value)), '[]'::jsonb);
+  end if;
+  if jsonb_typeof(p_value)='object' then
+    return coalesce((select jsonb_object_agg(key,private.strip_assessment_answers(value))
+      from jsonb_each(p_value)
+      where lower(key) not in ('correctanswer','correctanswerindex','correctoptionkey','correct_option_key','iscorrect','is_correct','answerkey','solution','solutions','explanation','explanationar','explanationen')),'{}'::jsonb);
+  end if;
+  return p_value;
+end;
+$$;
+revoke all on function private.strip_assessment_answers(jsonb) from public, anon, authenticated;
+
+create or replace function public.get_safe_lesson_blocks(p_lesson_id uuid)
+returns jsonb
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+declare v_staff boolean := private.has_permission('content.manage'); v_result jsonb;
+begin
+  if not private.can_access_lesson(p_lesson_id) then
+    raise exception using errcode='42501', message='Lesson blocks access denied';
+  end if;
+  select coalesce(jsonb_agg(jsonb_build_object(
+    'id',lb.id,'lesson_id',lb.lesson_id,'block_type',lb.block_type,
+    'title_ar',lb.title_ar,'title_en',lb.title_en,'order_index',lb.order_index,
+    'status',lb.status,'content',case when v_staff or lb.block_type not in ('exercise','quiz_reference') then lb.content else private.strip_assessment_answers(lb.content) end,
+    'media_asset_id',lb.media_asset_id,'quiz_id',lb.quiz_id,'archived_at',lb.archived_at,
+    'media_assets',case when ma.id is null then null else jsonb_build_object(
+      'bucket_id',ma.bucket_id,'storage_path',ma.storage_path,'file_name',ma.file_name,'mime_type',ma.mime_type
+    ) end
+  ) order by lb.order_index),'[]'::jsonb) into v_result
+  from public.lesson_blocks lb left join public.media_assets ma on ma.id=lb.media_asset_id
+  where lb.lesson_id=p_lesson_id and (v_staff or lb.status='published'::public.lesson_status);
+  return v_result;
+end;
+$$;
+revoke all on function public.get_safe_lesson_blocks(uuid) from public, anon, authenticated;
+grant execute on function public.get_safe_lesson_blocks(uuid) to anon, authenticated;
+
+create or replace function private.can_access_media_asset(p_asset_id uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select exists (
+    select 1 from public.media_assets ma where ma.id=p_asset_id and ma.archived_at is null and (
+      private.has_permission('media.manage')
+      or exists(select 1 from public.lesson_blocks lb where lb.media_asset_id=ma.id and lb.status='published'::public.lesson_status and private.can_access_lesson(lb.lesson_id))
+      or exists(select 1 from public.courses c where c.thumbnail_asset_id=ma.id and c.status='published'::public.course_status)
+      or exists(select 1 from public.certificates cert where cert.user_id=(select auth.uid()) and private.current_user_is_active() and (cert.template_snapshot->>'logoAssetId'=ma.id::text or cert.template_snapshot->>'signatureAssetId'=ma.id::text))
+    )
+  );
+$$;
+
+create or replace function private.can_access_media_object(p_bucket_id text, p_storage_path text)
+returns boolean
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select exists(select 1 from public.media_assets ma where ma.bucket_id=p_bucket_id and ma.storage_path=p_storage_path and private.can_access_media_asset(ma.id));
+$$;
+revoke all on function private.can_access_media_asset(uuid) from public, anon, authenticated;
+revoke all on function private.can_access_media_object(text,text) from public, anon, authenticated;
+grant execute on function private.can_access_media_asset(uuid) to anon, authenticated;
+grant execute on function private.can_access_media_object(text,text) to anon, authenticated;
 
 -- ---------------------------------------------------------------------------
 -- Certificate configuration, authoritative issuance, and verification
@@ -607,6 +805,90 @@ revoke all on function private.issue_certificate_if_eligible(uuid, uuid, boolean
 revoke all on function private.trigger_certificate_after_progress() from public, anon, authenticated;
 revoke all on function private.trigger_certificate_after_quiz() from public, anon, authenticated;
 
+-- Progress credit is calculated from server time. Students cannot submit
+-- watched_seconds, completion flags, course totals, or another user's ID.
+create or replace function public.record_lesson_progress(
+  p_lesson_id uuid,
+  p_video_position_seconds integer default 0
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_user_id uuid := (select auth.uid());
+  v_lesson public.lessons%rowtype;
+  v_progress public.lesson_progress%rowtype;
+  v_now timestamptz := now();
+  v_elapsed_seconds integer := 0;
+  v_duration_seconds integer;
+  v_required_seconds integer;
+  v_watched_seconds integer;
+  v_watch_percentage numeric(5,2);
+  v_is_completed boolean;
+  v_total_lessons integer;
+  v_completed_lessons integer;
+begin
+  if v_user_id is null or not private.current_user_is_active() then
+    raise exception using errcode='42501', message='Active authentication required';
+  end if;
+  if not private.can_access_lesson(p_lesson_id) then
+    raise exception using errcode='42501', message='Lesson access denied';
+  end if;
+  select * into v_lesson from public.lessons
+  where id=p_lesson_id and status='published'::public.lesson_status;
+  if not found then raise exception using errcode='P0002', message='Published lesson not found'; end if;
+
+  perform pg_advisory_xact_lock(hashtextextended('progress:' || v_user_id::text || ':' || p_lesson_id::text, 0));
+  select * into v_progress from public.lesson_progress
+  where user_id=v_user_id and lesson_id=p_lesson_id for update;
+
+  if found and v_progress.last_watched_at is not null then
+    v_elapsed_seconds := least(60, greatest(0, floor(extract(epoch from (v_now-v_progress.last_watched_at)))::integer));
+  end if;
+  v_duration_seconds := greatest(60, coalesce(v_lesson.duration_minutes, v_lesson.estimated_minutes, 1) * 60);
+  v_required_seconds := greatest(30, ceil(v_duration_seconds * 0.80)::integer);
+  v_watched_seconds := least(v_duration_seconds, coalesce(v_progress.watched_seconds, 0) + v_elapsed_seconds);
+  v_watch_percentage := least(100, round((v_watched_seconds::numeric / v_duration_seconds::numeric) * 100, 2));
+  v_is_completed := coalesce(v_progress.is_completed, false) or v_watched_seconds >= v_required_seconds;
+
+  insert into public.lesson_progress(
+    user_id,lesson_id,video_position_seconds,watched_seconds,watch_percentage,
+    is_completed,completed_at,last_watched_at
+  ) values (
+    v_user_id,p_lesson_id,greatest(0,coalesce(p_video_position_seconds,0)),v_watched_seconds,v_watch_percentage,
+    v_is_completed,case when v_is_completed then v_now else null end,v_now
+  )
+  on conflict (user_id,lesson_id) do update set
+    video_position_seconds=greatest(public.lesson_progress.video_position_seconds,excluded.video_position_seconds),
+    watched_seconds=excluded.watched_seconds,
+    watch_percentage=excluded.watch_percentage,
+    is_completed=public.lesson_progress.is_completed or excluded.is_completed,
+    completed_at=case when public.lesson_progress.is_completed then public.lesson_progress.completed_at when excluded.is_completed then v_now else null end,
+    last_watched_at=v_now,
+    updated_at=v_now;
+
+  select count(*) into v_total_lessons from public.lessons l
+  where l.course_id=v_lesson.course_id and l.status='published'::public.lesson_status;
+  select count(*) into v_completed_lessons from public.lesson_progress lp
+  join public.lessons l on l.id=lp.lesson_id
+  where lp.user_id=v_user_id and lp.is_completed and l.course_id=v_lesson.course_id
+    and l.status='published'::public.lesson_status;
+  insert into public.course_progress(user_id,course_id,completed_lessons,total_lessons,progress_percentage,completed_at,updated_at)
+  values(v_user_id,v_lesson.course_id,v_completed_lessons,v_total_lessons,
+    case when v_total_lessons>0 then round((v_completed_lessons::numeric/v_total_lessons::numeric)*100,2) else 0 end,
+    case when v_total_lessons>0 and v_completed_lessons>=v_total_lessons then v_now else null end,v_now)
+  on conflict (user_id,course_id) do update set
+    completed_lessons=excluded.completed_lessons,total_lessons=excluded.total_lessons,
+    progress_percentage=excluded.progress_percentage,completed_at=excluded.completed_at,updated_at=v_now;
+
+  return jsonb_build_object('isCompleted',v_is_completed,'watchPercentage',v_watch_percentage,'watchedSeconds',v_watched_seconds);
+end;
+$$;
+revoke all on function public.record_lesson_progress(uuid, integer) from public, anon, authenticated;
+grant execute on function public.record_lesson_progress(uuid, integer) to authenticated;
+
 create or replace function public.verify_certificate(p_verification_code text)
 returns table (
   valid boolean,
@@ -702,6 +984,9 @@ begin
   if (select auth.uid()) is null or not private.current_user_is_active() then
     raise exception using errcode='42501', message='Active authentication required';
   end if;
+  if not exists(select 1 from public.feature_flags where key='quizzes' and enabled) then
+    raise exception using errcode='42501', message='Quizzes are disabled';
+  end if;
   select * into v_quiz from public.quizzes
   where id=p_quiz_id and status='published'::public.lesson_status and is_active;
   if not found or not private.can_access_lesson(v_quiz.lesson_id) then
@@ -733,6 +1018,9 @@ declare
 begin
   if (select auth.uid()) is null or not private.current_user_is_active() then
     raise exception using errcode='42501', message='Active authentication required';
+  end if;
+  if not exists(select 1 from public.feature_flags where key='quizzes' and enabled) then
+    raise exception using errcode='42501', message='Quizzes are disabled';
   end if;
   if jsonb_typeof(p_answers) <> 'object' then raise exception using errcode='22023', message='Answers must be an object'; end if;
   select * into v_quiz from public.quizzes
@@ -792,6 +1080,62 @@ grant execute on function public.get_quiz_for_attempt(uuid) to authenticated;
 grant execute on function public.submit_quiz_attempt(uuid,jsonb) to authenticated;
 grant execute on function public.add_bank_question_to_quiz(uuid,uuid) to authenticated;
 
+-- Plan metadata and both billing prices are updated atomically. Previous price
+-- rows are retained inactive for payment/audit history.
+create or replace function public.manage_subscription_plan(p_plan_id uuid, p_payload jsonb)
+returns boolean
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_features jsonb;
+  v_currency text := coalesce(nullif(trim(p_payload->>'currency'),''),'SAR');
+begin
+  if not private.has_permission('subscriptions.manage') then
+    raise exception using errcode='42501', message='Subscription management permission required';
+  end if;
+  if jsonb_typeof(p_payload) <> 'object' then
+    raise exception using errcode='22023', message='Plan payload must be an object';
+  end if;
+  if not exists(select 1 from public.plans where id=p_plan_id) then
+    raise exception using errcode='P0002', message='Plan not found';
+  end if;
+  v_features := jsonb_strip_nulls(jsonb_build_object(
+    'items',coalesce(p_payload->'featuresAr','[]'::jsonb),
+    'nameEn',p_payload->'nameEn','badgeAr',p_payload->'badgeAr',
+    'isPopular',p_payload->'isPopular','buttonTextAr',p_payload->'buttonTextAr',
+    'originalPriceMonthly',p_payload->'originalPriceMonthly',
+    'originalPriceYearly',p_payload->'originalPriceYearly'
+  ));
+  update public.plans set
+    name=case when p_payload ? 'nameAr' then coalesce(nullif(trim(p_payload->>'nameAr'),''),name) else name end,
+    description=case when p_payload ? 'descriptionAr' then p_payload->>'descriptionAr' else description end,
+    features=v_features,
+    is_active=case when p_payload ? 'isActive' then (p_payload->>'isActive')::boolean else is_active end,
+    updated_at=now()
+  where id=p_plan_id;
+
+  if p_payload ? 'priceMonthly' then
+    if (p_payload->>'priceMonthly')::numeric < 0 then raise exception using errcode='22023', message='Monthly price must be non-negative'; end if;
+    update public.plan_prices set is_active=false where plan_id=p_plan_id and interval='month' and is_active;
+    insert into public.plan_prices(plan_id,currency,amount,interval,is_active)
+    values(p_plan_id,v_currency,(p_payload->>'priceMonthly')::numeric,'month',true);
+  end if;
+  if p_payload ? 'priceYearly' then
+    if (p_payload->>'priceYearly')::numeric < 0 then raise exception using errcode='22023', message='Yearly price must be non-negative'; end if;
+    update public.plan_prices set is_active=false where plan_id=p_plan_id and interval='year' and is_active;
+    insert into public.plan_prices(plan_id,currency,amount,interval,is_active)
+    values(p_plan_id,v_currency,(p_payload->>'priceYearly')::numeric,'year',true);
+  end if;
+  insert into public.audit_logs(user_id,action,entity_type,entity_id,metadata)
+  values((select auth.uid()),'update_plan','plans',p_plan_id,jsonb_build_object('prices_updated',(p_payload ? 'priceMonthly') or (p_payload ? 'priceYearly')));
+  return true;
+end;
+$$;
+revoke all on function public.manage_subscription_plan(uuid,jsonb) from public, anon, authenticated;
+grant execute on function public.manage_subscription_plan(uuid,jsonb) to authenticated;
+
 -- ---------------------------------------------------------------------------
 -- Restore, permanent delete, and portable import/export RPCs
 -- ---------------------------------------------------------------------------
@@ -804,9 +1148,13 @@ set search_path = ''
 as $$
 declare v public.content_versions%rowtype; s jsonb;
 begin
-  if not private.has_permission('content.manage') then raise exception using errcode = '42501', message = 'Content management permission required'; end if;
   select * into v from public.content_versions where id = p_version_id;
   if not found then raise exception using errcode = 'P0002', message = 'Version not found'; end if;
+  if (v.entity_type in ('courses','lessons','lesson_content','lesson_blocks') and not private.has_permission('content.manage'))
+     or (v.entity_type='quizzes' and not private.has_permission('quiz.manage'))
+     or (v.entity_type='cms_pages' and not private.has_permission('settings.manage')) then
+    raise exception using errcode = '42501', message = 'Permission required to restore this content type';
+  end if;
   s := v.snapshot;
   case v.entity_type
     when 'courses' then
@@ -862,15 +1210,27 @@ begin
     when 'course' then
       if exists (select 1 from public.lesson_progress lp join public.lessons l on l.id=lp.lesson_id where l.course_id=p_entity_id)
          or exists (select 1 from public.course_progress cp where cp.course_id=p_entity_id)
+         or exists (select 1 from public.quiz_attempts qa join public.quizzes q on q.id=qa.quiz_id join public.lessons l on l.id=q.lesson_id where l.course_id=p_entity_id)
          or exists (select 1 from public.certificates c where c.course_id=p_entity_id)
       then raise exception using errcode='23503', message='Course has historical student activity and cannot be permanently deleted'; end if;
       delete from public.courses where id=p_entity_id and status='archived'::public.course_status;
     when 'lesson' then
       if exists (select 1 from public.lesson_progress where lesson_id=p_entity_id)
+         or exists (select 1 from public.quiz_attempts qa join public.quizzes q on q.id=qa.quiz_id where q.lesson_id=p_entity_id)
+         or exists (select 1 from public.certificates c join public.lessons l on l.course_id=c.course_id where l.id=p_entity_id)
       then raise exception using errcode='23503', message='Lesson has historical student activity and cannot be permanently deleted'; end if;
       delete from public.lessons where id=p_entity_id and status='archived'::public.lesson_status;
     when 'page' then delete from public.cms_pages where id=p_entity_id and status='archived'::public.lesson_status;
-    when 'lesson_block' then delete from public.lesson_blocks where id=p_entity_id and status='archived'::public.lesson_status;
+    when 'lesson_block' then
+      if exists (
+        select 1 from public.lesson_blocks lb
+        where lb.id=p_entity_id and (
+          exists(select 1 from public.lesson_progress lp where lp.lesson_id=lb.lesson_id)
+          or exists(select 1 from public.quiz_attempts qa join public.quizzes q on q.id=qa.quiz_id where q.lesson_id=lb.lesson_id)
+          or exists(select 1 from public.certificates c join public.lessons l on l.course_id=c.course_id where l.id=lb.lesson_id)
+        )
+      ) then raise exception using errcode='23503', message='Lesson block has historical student activity and cannot be permanently deleted'; end if;
+      delete from public.lesson_blocks where id=p_entity_id and status='archived'::public.lesson_status;
     else raise exception using errcode='22023', message='Unsupported delete entity';
   end case;
   if not found then return false; end if;
@@ -878,6 +1238,34 @@ begin
   return true;
 end;
 $$;
+
+create or replace function private.portable_content_has_forbidden_key(p_value jsonb)
+returns boolean
+language plpgsql
+immutable
+set search_path = ''
+as $$
+begin
+  if p_value is null then return false; end if;
+  if jsonb_typeof(p_value)='array' then
+    return exists(select 1 from jsonb_array_elements(p_value) item where private.portable_content_has_forbidden_key(item));
+  end if;
+  if jsonb_typeof(p_value)='object' then
+    return exists(
+      select 1 from jsonb_each(p_value) entry
+      where lower(entry.key) in (
+        'users','user_roles','role_permissions','user_permissions','permissions',
+        'payments','payment_events','subscriptions','service_role','service_role_key',
+        'api_key','apikey','password','secret','token','access_token','refresh_token',
+        'created_by','updated_by','issued_by','revoked_by','uploaded_by','user_id'
+      )
+      or private.portable_content_has_forbidden_key(entry.value)
+    );
+  end if;
+  return false;
+end;
+$$;
+revoke all on function private.portable_content_has_forbidden_key(jsonb) from public, anon, authenticated;
 
 create or replace function public.export_course(p_course_id uuid)
 returns jsonb
@@ -888,7 +1276,9 @@ set search_path = ''
 as $$
 declare result jsonb;
 begin
-  if not private.has_permission('content.manage') then raise exception using errcode='42501', message='Content management permission required'; end if;
+  if not private.has_permission('content.manage') or not private.has_permission('quiz.manage') or not private.has_permission('certificates.manage') then
+    raise exception using errcode='42501', message='Content, quiz, and certificate permissions are required for a complete course export';
+  end if;
   select jsonb_build_object(
     'schemaVersion', 1,
     'exportedAt', now(),
@@ -899,7 +1289,7 @@ begin
       'legacyContent', (select lc.content from public.lesson_content lc where lc.lesson_id=l.id),
       'blocks', coalesce((select jsonb_agg(to_jsonb(lb) - 'created_by' - 'updated_by' order by lb.order_index) from public.lesson_blocks lb where lb.lesson_id=l.id), '[]'::jsonb),
       'quizzes', coalesce((select jsonb_agg(jsonb_build_object(
-        'quiz', to_jsonb(q),
+        'quiz', to_jsonb(q) - 'created_by' - 'updated_by',
         'questions', coalesce((select jsonb_agg(jsonb_build_object(
           'question', to_jsonb(qq),
           'options', coalesce((select jsonb_agg(to_jsonb(qo) order by qo.sort_order) from public.quiz_options qo where qo.question_id=qq.id), '[]'::jsonb)
@@ -908,6 +1298,9 @@ begin
     ) order by l.sort_order) from public.lessons l where l.course_id=c.id), '[]'::jsonb)
   ) into result from public.courses c where c.id=p_course_id;
   if result is null then raise exception using errcode='P0002', message='Course not found'; end if;
+  if private.portable_content_has_forbidden_key(result) then
+    raise exception using errcode='22023', message='Course content contains fields that are not portable';
+  end if;
   return result;
 end;
 $$;
@@ -924,9 +1317,21 @@ declare
   v_course_id uuid := gen_random_uuid(); v_lesson_id uuid; v_quiz_id uuid; v_question_id uuid;
   v_slug text;
 begin
-  if not private.has_permission('content.manage') then raise exception using errcode='42501', message='Content management permission required'; end if;
-  if coalesce((p_payload->>'schemaVersion')::integer,0) <> 1 or c is null or jsonb_typeof(p_payload->'lessons') <> 'array'
+  if not private.has_permission('content.manage') or not private.has_permission('quiz.manage') or not private.has_permission('certificates.manage') then
+    raise exception using errcode='42501', message='Content, quiz, and certificate permissions are required for course import';
+  end if;
+  if jsonb_typeof(p_payload) <> 'object' or octet_length(p_payload::text) > 5000000 then
+    raise exception using errcode='22023', message='Course package must be an object smaller than 5 MB';
+  end if;
+  if private.portable_content_has_forbidden_key(p_payload) then
+    raise exception using errcode='22023', message='Course package contains forbidden identity, authorization, payment, or secret fields';
+  end if;
+  if exists(select 1 from jsonb_object_keys(p_payload) as k(key) where key not in ('schemaVersion','exportedAt','course','certificateSettings','lessons')) then
+    raise exception using errcode='22023', message='Course package contains unsupported top-level fields';
+  end if;
+  if coalesce(p_payload->>'schemaVersion','') <> '1' or c is null or jsonb_typeof(p_payload->'lessons') <> 'array'
   then raise exception using errcode='22023', message='Invalid or unsupported course package'; end if;
+  if jsonb_array_length(p_payload->'lessons') > 500 then raise exception using errcode='22023', message='Course package has too many lessons'; end if;
   if coalesce(nullif(trim(c->>'title'), ''), nullif(trim(c->>'title_en'), ''), nullif(trim(c->>'title_ar'), '')) is null
   then raise exception using errcode='22023', message='Course title is required'; end if;
   v_slug := coalesce(nullif(c->>'slug',''), 'imported-course') || '-' || lower(substr(replace(v_course_id::text,'-',''),1,8));
@@ -935,6 +1340,10 @@ begin
     coalesce((c->>'sort_order')::integer,0),false,coalesce((c->>'is_free')::boolean,false),c->>'level',c->>'category',c->>'category_ar',nullif(c->>'duration_hours','')::numeric,(select auth.uid()),(select auth.uid()));
 
   if jsonb_typeof(p_payload->'certificateSettings') = 'object' then
+    if coalesce((p_payload->'certificateSettings'->>'require_all_lessons')::boolean,true)=false
+       and coalesce((p_payload->'certificateSettings'->>'require_final_quiz')::boolean,true)=false then
+      raise exception using errcode='22023', message='Certificate settings require at least one completion rule';
+    end if;
     insert into public.course_certificate_settings(
       course_id, enabled, certificate_title, minimum_final_score,
       require_all_lessons, require_final_quiz, template_settings,
@@ -958,6 +1367,10 @@ begin
        or coalesce(nullif(trim(l_item->'lesson'->>'title'),''),nullif(trim(l_item->'lesson'->>'title_en'),''),nullif(trim(l_item->'lesson'->>'title_ar'),'')) is null then
       raise exception using errcode='22023', message='Every imported lesson must have a title';
     end if;
+    if jsonb_array_length(case when jsonb_typeof(l_item->'blocks')='array' then l_item->'blocks' else '[]'::jsonb end)>500
+       or jsonb_array_length(case when jsonb_typeof(l_item->'quizzes')='array' then l_item->'quizzes' else '[]'::jsonb end)>50 then
+      raise exception using errcode='22023', message='Imported lesson exceeds content limits';
+    end if;
     v_lesson_id := gen_random_uuid();
     insert into public.lessons(id,course_id,slug,title,title_ar,title_en,description,status,sort_order,estimated_minutes,is_free,level,duration_minutes,summary_ar,arabic_explanation,unit_number,updated_by)
     values(v_lesson_id,v_course_id,coalesce(nullif(l_item->'lesson'->>'slug',''),'lesson')||'-'||lower(substr(replace(v_lesson_id::text,'-',''),1,8)),
@@ -972,10 +1385,16 @@ begin
       values(v_lesson_id,b->>'block_type',b->>'title_ar',b->>'title_en',coalesce(b->'content','{}'::jsonb),coalesce((b->>'order_index')::integer,0),'draft',(select auth.uid()),(select auth.uid()));
     end loop;
     for q_item in select value from jsonb_array_elements(case when jsonb_typeof(l_item->'quizzes')='array' then l_item->'quizzes' else '[]'::jsonb end) loop
+      if jsonb_array_length(case when jsonb_typeof(q_item->'questions')='array' then q_item->'questions' else '[]'::jsonb end)>200 then
+        raise exception using errcode='22023', message='Imported quiz has too many questions';
+      end if;
       v_quiz_id := gen_random_uuid();
       insert into public.quizzes(id,lesson_id,title,description,passing_score,max_attempts,is_active,status,is_final)
       values(v_quiz_id,v_lesson_id,coalesce(q_item->'quiz'->>'title','Imported quiz'),q_item->'quiz'->>'description',coalesce((q_item->'quiz'->>'passing_score')::numeric,70),nullif(q_item->'quiz'->>'max_attempts','')::integer,true,'draft',coalesce((q_item->'quiz'->>'is_final')::boolean,false));
       for qq_item in select value from jsonb_array_elements(case when jsonb_typeof(q_item->'questions')='array' then q_item->'questions' else '[]'::jsonb end) loop
+        if jsonb_array_length(case when jsonb_typeof(qq_item->'options')='array' then qq_item->'options' else '[]'::jsonb end) not between 2 and 10 then
+          raise exception using errcode='22023', message='Every imported quiz question must have between 2 and 10 options';
+        end if;
         v_question_id := gen_random_uuid();
         insert into public.quiz_questions(id,quiz_id,question_text,explanation,points,sort_order)
         values(v_question_id,v_quiz_id,qq_item->'question'->>'question_text',qq_item->'question'->>'explanation',coalesce((qq_item->'question'->>'points')::numeric,1),coalesce((qq_item->'question'->>'sort_order')::integer,0));
@@ -1020,7 +1439,20 @@ end $$;
 -- these management policies.
 drop policy if exists "staff manage profiles" on public.profiles;
 create policy "staff manage profiles" on public.profiles for all to authenticated
-using ((select private.has_permission('students.manage'))) with check ((select private.has_permission('students.manage')));
+using (
+  (select private.has_permission('students.manage'))
+  and (
+    not (select private.is_staff_user(profiles.id))
+    or (select private.has_role('owner'::public.app_role))
+  )
+)
+with check (
+  (select private.has_permission('students.manage'))
+  and (
+    not (select private.is_staff_user(profiles.id))
+    or (select private.has_role('owner'::public.app_role))
+  )
+);
 drop policy if exists "staff manage roles" on public.user_roles;
 create policy "staff manage roles" on public.user_roles for all to authenticated
 using ((select private.has_permission('roles.manage'))) with check ((select private.has_permission('roles.manage')));
@@ -1034,6 +1466,7 @@ drop policy if exists "staff manage lessons" on public.lessons;
 create policy "staff manage lessons" on public.lessons for all to authenticated using ((select private.has_permission('content.manage'))) with check ((select private.has_permission('content.manage')));
 drop policy if exists "staff manage lesson content" on public.lesson_content;
 create policy "staff manage lesson content" on public.lesson_content for all to authenticated using ((select private.has_permission('content.manage'))) with check ((select private.has_permission('content.manage')));
+drop policy if exists "entitled lesson content is viewable" on public.lesson_content;
 drop policy if exists "staff manage video assets" on public.video_assets;
 create policy "staff manage video assets" on public.video_assets for all to authenticated using ((select private.has_permission('media.manage'))) with check ((select private.has_permission('media.manage')));
 drop policy if exists "staff manage lesson resources" on public.lesson_resources;
@@ -1072,8 +1505,14 @@ create policy "staff view payment events" on public.payment_events for select to
 
 drop policy if exists "staff manage lesson progress" on public.lesson_progress;
 create policy "staff manage lesson progress" on public.lesson_progress for all to authenticated using ((select private.has_permission('students.manage'))) with check ((select private.has_permission('students.manage')));
+drop policy if exists "active users manage own lesson progress" on public.lesson_progress;
+drop policy if exists "users view own lesson progress" on public.lesson_progress;
+create policy "users view own lesson progress" on public.lesson_progress for select to authenticated using ((select auth.uid())=user_id and (select private.current_user_is_active()));
 drop policy if exists "staff manage course progress" on public.course_progress;
 create policy "staff manage course progress" on public.course_progress for all to authenticated using ((select private.has_permission('students.manage'))) with check ((select private.has_permission('students.manage')));
+drop policy if exists "active users manage own course progress" on public.course_progress;
+drop policy if exists "users view own course progress" on public.course_progress;
+create policy "users view own course progress" on public.course_progress for select to authenticated using ((select auth.uid())=user_id and (select private.current_user_is_active()));
 drop policy if exists "staff manage quiz attempts" on public.quiz_attempts;
 drop policy if exists "active users manage own quiz attempts" on public.quiz_attempts;
 drop policy if exists "users view own quiz attempts" on public.quiz_attempts;
@@ -1116,8 +1555,6 @@ drop policy if exists "settings managers manage pages" on public.cms_pages;
 create policy "settings managers manage pages" on public.cms_pages for all to authenticated using ((select private.has_permission('settings.manage'))) with check ((select private.has_permission('settings.manage')));
 
 drop policy if exists "entitled lesson blocks viewable" on public.lesson_blocks;
-create policy "entitled lesson blocks viewable" on public.lesson_blocks for select to anon, authenticated
-using (status='published'::public.lesson_status and (select private.can_access_lesson(lesson_id)));
 drop policy if exists "content managers manage lesson blocks" on public.lesson_blocks;
 create policy "content managers manage lesson blocks" on public.lesson_blocks for all to authenticated using ((select private.has_permission('content.manage'))) with check ((select private.has_permission('content.manage')));
 
@@ -1126,13 +1563,14 @@ create policy "content managers manage lesson blocks" on public.lesson_blocks fo
 -- or free-preview entitled.
 drop policy if exists "entitled quizzes are viewable" on public.quizzes;
 create policy "entitled quizzes are viewable" on public.quizzes for select to anon, authenticated
-using (status='published'::public.lesson_status and (select private.can_access_lesson(lesson_id)));
+using (status='published'::public.lesson_status and exists(select 1 from public.feature_flags where key='quizzes' and enabled) and (select private.can_access_lesson(lesson_id)));
 drop policy if exists "entitled quiz questions are viewable" on public.quiz_questions;
 create policy "entitled quiz questions are viewable" on public.quiz_questions for select to anon, authenticated
 using (exists (
   select 1 from public.quizzes q
   where q.id=quiz_questions.quiz_id
     and q.status='published'::public.lesson_status
+    and exists(select 1 from public.feature_flags where key='quizzes' and enabled)
     and (select private.can_access_lesson(q.lesson_id))
 ));
 drop policy if exists "entitled quiz options are viewable" on public.quiz_options;
@@ -1141,52 +1579,26 @@ using (exists (
   select 1 from public.quiz_questions qq join public.quizzes q on q.id=qq.quiz_id
   where qq.id=quiz_options.question_id
     and q.status='published'::public.lesson_status
+    and exists(select 1 from public.feature_flags where key='quizzes' and enabled)
     and (select private.can_access_lesson(q.lesson_id))
 ));
 
 drop policy if exists "entitled linked media metadata viewable" on public.media_assets;
 create policy "entitled linked media metadata viewable" on public.media_assets for select to anon, authenticated
-using (
-  archived_at is null and (
-    exists (
-      select 1 from public.lesson_blocks lb
-      where lb.media_asset_id = media_assets.id
-        and lb.status = 'published'::public.lesson_status
-        and (select private.can_access_lesson(lb.lesson_id))
-    )
-    or exists (
-      select 1 from public.courses c
-      where c.thumbnail_asset_id = media_assets.id
-        and c.status = 'published'::public.course_status
-    )
-  )
-);
+using ((select private.can_access_media_asset(id)));
 
 drop policy if exists "entitled linked lesson media objects" on storage.objects;
 create policy "entitled linked lesson media objects" on storage.objects for select to anon, authenticated
-using (
-  bucket_id = 'lesson-media' and exists (
-    select 1
-    from public.media_assets ma
-    left join public.lesson_blocks lb on lb.media_asset_id = ma.id
-    where ma.bucket_id = storage.objects.bucket_id
-      and ma.storage_path = storage.objects.name
-      and ma.archived_at is null
-      and (
-        (lb.status = 'published'::public.lesson_status and (select private.can_access_lesson(lb.lesson_id)))
-        or exists (
-          select 1 from public.courses c
-          where c.thumbnail_asset_id = ma.id
-            and c.status = 'published'::public.course_status
-        )
-      )
-  )
-);
+using (bucket_id = 'lesson-media' and (select private.can_access_media_object(bucket_id,name)));
 
 drop policy if exists "media managers manage asset links" on public.media_asset_links;
 create policy "media managers manage asset links" on public.media_asset_links for all to authenticated using ((select private.has_permission('media.manage'))) with check ((select private.has_permission('media.manage')));
 drop policy if exists "content managers view versions" on public.content_versions;
-create policy "content managers view versions" on public.content_versions for select to authenticated using ((select private.has_permission('content.manage')));
+create policy "content managers view versions" on public.content_versions for select to authenticated using (
+  (entity_type in ('courses','lessons','lesson_content','lesson_blocks') and (select private.has_permission('content.manage')))
+  or (entity_type='quizzes' and (select private.has_permission('quiz.manage')))
+  or (entity_type='cms_pages' and (select private.has_permission('settings.manage')))
+);
 
 drop policy if exists "certificate managers manage settings" on public.course_certificate_settings;
 create policy "certificate managers manage settings" on public.course_certificate_settings for all to authenticated using ((select private.has_permission('certificates.manage'))) with check ((select private.has_permission('certificates.manage')));
@@ -1218,8 +1630,14 @@ revoke insert, update, delete on table public.content_versions, public.certifica
 
 -- Correct answers remain server-only. Students receive safe option fields and
 -- submit option IDs to the authoritative scoring RPC above.
+revoke select on table public.quiz_questions from anon, authenticated;
+grant select (id,quiz_id,question_text,points,sort_order,created_at) on table public.quiz_questions to anon, authenticated;
 revoke select on table public.quiz_options from anon, authenticated;
 grant select (id,question_id,option_text,sort_order,created_at) on table public.quiz_options to anon, authenticated;
+
+-- Students can read their own progress through RLS, but only the server-time
+-- RPC can mutate completion evidence and derived course totals.
+revoke insert, update, delete on table public.lesson_progress, public.course_progress from anon, authenticated;
 
 -- Allow CMS metadata updates on existing assets without making storage public.
 grant update on table public.media_assets to authenticated;

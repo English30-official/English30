@@ -1,3 +1,4 @@
+import { LevelCode, StudentStats } from '../types';
 import { getSupabaseClient, isSupabaseConfigured } from '../lib/supabase';
 
 export interface LessonProgressUpdate {
@@ -9,26 +10,15 @@ export interface LessonProgressUpdate {
 }
 
 class ProgressService {
-  public async saveLessonProgress(update: LessonProgressUpdate): Promise<void> {
-    if (!isSupabaseConfigured) return;
-    const { data: { user } } = await getSupabaseClient().auth.getUser();
-    if (!user) return;
-
-    const payload = {
-      user_id: user.id,
-      lesson_id: update.lessonId,
-      is_completed: update.isCompleted ?? false,
-      video_position_seconds: Math.max(0, Math.round(update.videoPositionSeconds ?? 0)),
-      watched_seconds: Math.max(0, Math.round(update.watchedSeconds ?? 0)),
-      watch_percentage: Math.min(100, Math.max(0, update.watchPercentage ?? 0)),
-      ...(update.isCompleted ? { completed_at: new Date().toISOString() } : {}),
-      last_watched_at: new Date().toISOString(),
-    };
-
-    const { error } = await getSupabaseClient()
-      .from('lesson_progress')
-      .upsert(payload, { onConflict: 'user_id,lesson_id' });
+  public async saveLessonProgress(update: LessonProgressUpdate): Promise<{ isCompleted: boolean; watchPercentage: number }> {
+    if (!isSupabaseConfigured) return { isCompleted: false, watchPercentage: 0 };
+    const { data, error } = await getSupabaseClient().rpc('record_lesson_progress', {
+      p_lesson_id: update.lessonId,
+      p_video_position_seconds: Math.max(0, Math.round(update.videoPositionSeconds ?? 0)),
+    });
     if (error) throw error;
+    const result = data as { isCompleted?: boolean; watchPercentage?: number } | null;
+    return { isCompleted: result?.isCompleted === true, watchPercentage: Number(result?.watchPercentage || 0) };
   }
 
   public async getLessonProgress(lessonId: string) {
@@ -46,27 +36,55 @@ class ProgressService {
   }
 
   public async syncCourseProgress(courseId: string): Promise<void> {
-    if (!isSupabaseConfigured) return;
-    const { data: { user } } = await getSupabaseClient().auth.getUser();
-    if (!user) return;
+    // Course totals are synchronized transactionally by record_lesson_progress.
+    // Keep this method for API compatibility with existing callers.
+    void courseId;
+  }
 
-    const [{ count: totalLessons }, { count: completedLessons }] = await Promise.all([
-      getSupabaseClient().from('lessons').select('id', { count: 'exact', head: true }).eq('course_id', courseId).eq('status', 'published'),
-      getSupabaseClient().from('lesson_progress').select('lesson_id', { count: 'exact', head: true }).eq('user_id', user.id).eq('is_completed', true).in('lesson_id', (await getSupabaseClient().from('lessons').select('id').eq('course_id', courseId).eq('status', 'published')).data?.map((row) => row.id) ?? ['00000000-0000-0000-0000-000000000000']),
+  public async getStudentStats(): Promise<StudentStats> {
+    const empty: StudentStats = {
+      level: 'A1', xp: 0, streakDays: 0, wordsLearned: 0, totalWordsTarget: 1000,
+      completedLessons: 0, totalLessons: 0, quizzesTaken: 0, averageScore: 0,
+      studyTimeMinutesThisWeek: ['الأحد','الاثنين','الثلاثاء','الأربعاء','الخميس','الجمعة','السبت'].map((day) => ({ day, minutes: 0 })),
+      achievements: [],
+    };
+    if (!isSupabaseConfigured) return empty;
+    const client = getSupabaseClient();
+    const { data: { user } } = await client.auth.getUser();
+    if (!user) return empty;
+    const [profileResult, progressResult, quizResult, lessonsResult] = await Promise.all([
+      client.from('profiles').select('level,xp_points,streak_days').eq('id', user.id).maybeSingle(),
+      client.from('lesson_progress').select('is_completed,watched_seconds,last_watched_at').eq('user_id', user.id),
+      client.from('quiz_attempts').select('score').eq('user_id', user.id),
+      client.from('lessons').select('id', { count: 'exact', head: true }).eq('status', 'published'),
     ]);
-
-    const total = totalLessons ?? 0;
-    const completed = completedLessons ?? 0;
-    const percentage = total > 0 ? Math.round((completed / total) * 10000) / 100 : 0;
-    const { error } = await getSupabaseClient().from('course_progress').upsert({
-      user_id: user.id,
-      course_id: courseId,
-      total_lessons: total,
-      completed_lessons: completed,
-      progress_percentage: percentage,
-      completed_at: total > 0 && completed >= total ? new Date().toISOString() : null,
-    }, { onConflict: 'user_id,course_id' });
-    if (error) throw error;
+    const firstError = profileResult.error || progressResult.error || quizResult.error || lessonsResult.error;
+    if (firstError) throw firstError;
+    const completedLessons = (progressResult.data ?? []).filter((row) => row.is_completed).length;
+    const quizScores = (quizResult.data ?? []).map((row) => Number(row.score || 0));
+    const today = new Date().getDay();
+    const weekly = empty.studyTimeMinutesThisWeek.map((item, index) => ({
+      ...item,
+      minutes: index === today
+        ? Math.round((progressResult.data ?? []).reduce((total, row) => total + Number(row.watched_seconds || 0), 0) / 60)
+        : 0,
+    }));
+    return {
+      ...empty,
+      level: (profileResult.data?.level as LevelCode) || 'A1',
+      xp: Number(profileResult.data?.xp_points || 0),
+      streakDays: Number(profileResult.data?.streak_days || 0),
+      wordsLearned: completedLessons * 4,
+      completedLessons,
+      totalLessons: lessonsResult.count ?? 0,
+      quizzesTaken: quizScores.length,
+      averageScore: quizScores.length ? Math.round(quizScores.reduce((sum, score) => sum + score, 0) / quizScores.length) : 0,
+      studyTimeMinutesThisWeek: weekly,
+      achievements: [
+        { id: 'first-lesson', titleAr: 'الخطوة الأولى', descAr: 'إكمال أول درس', icon: '🎯', unlocked: completedLessons > 0 },
+        { id: 'first-quiz', titleAr: 'أول اختبار', descAr: 'إرسال أول اختبار رسمي', icon: '🏆', unlocked: quizScores.length > 0 },
+      ],
+    };
   }
 }
 
