@@ -3,7 +3,7 @@ export { coursesService } from './coursesService';
 export { lessonsService } from './lessonsService';
 export { questionsService } from './questionsService';
 export { studentsService } from './studentsService';
-export { subscriptionsService } from './subscriptionsService';
+export { subscriptionsService } from './subscriptionsServiceSupabase';
 export { paymentService } from './paymentService';
 export { auditService } from './auditService';
 export { ownerAIService } from './ownerAIService';
