@@ -15,11 +15,26 @@ export const AuthView: React.FC<AuthViewProps> = ({ onAuthenticated }) => {
   const submit = async (e: React.FormEvent) => {
     e.preventDefault(); setBusy(true); setError(''); setMessage('');
     try {
-      if (mode === 'signin') { await authService.signIn(email.trim(), password); onAuthenticated(); }
-      else if (mode === 'signup') { const result = await authService.signUp(email.trim(), password, name.trim()); setMessage(result.needsEmailConfirmation ? 'تم إنشاء الحساب. تحقق من بريدك الإلكتروني لتأكيده.' : 'تم إنشاء الحساب.'); if (!result.needsEmailConfirmation) onAuthenticated(); }
-      else { await authService.resetPassword(email.trim()); setMessage('أرسلنا رابط استعادة كلمة المرور إلى بريدك إذا كان الحساب موجودًا.'); }
-    } catch (err) { setError(err instanceof Error ? err.message : 'حدث خطأ غير متوقع.'); }
-    finally { setBusy(false); }
+      if (mode === 'signin') {
+        await authService.signIn(email.trim(), password);
+        onAuthenticated();
+      } else if (mode === 'signup') {
+        const result = await authService.signUp(email.trim(), password, name.trim());
+        if (result.session) {
+          setMessage('تم إنشاء الحساب وتسجيل الدخول.');
+          onAuthenticated();
+        } else {
+          setMessage('تم إنشاء الحساب. تحقق من بريدك الإلكتروني لتأكيده ثم سجّل الدخول.');
+        }
+      } else {
+        await authService.resetPassword(email.trim());
+        setMessage('أرسلنا رابط استعادة كلمة المرور إلى بريدك إذا كان الحساب موجودًا.');
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'حدث خطأ غير متوقع.');
+    } finally {
+      setBusy(false);
+    }
   };
 
   return <div className="min-h-[70vh] flex items-center justify-center py-10"><div className="w-full max-w-md bg-white border border-slate-200 rounded-3xl shadow-lg p-7" dir="rtl">
