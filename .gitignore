@@ -1,8 +1,33 @@
+# Dependencies and generated output
 node_modules/
 build/
 dist/
 coverage/
-.DS_Store
 *.log
-.env*
+.DS_Store
+
+# Environment files and local secret overrides
+.env
+.env.*
+*.env
+*.env.*
 !.env.example
+!*.env.example
+.envrc
+.direnv/
+
+# Local deployment and Supabase state
+.vercel/
+.netlify/
+.supabase/
+supabase/.temp/
+
+# Private credential files
+*.pem
+*.p12
+*.pfx
+*.jks
+*.secret
+*.secrets
+service-account*.json
+credentials*.json
