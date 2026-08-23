@@ -11,4 +11,5 @@ export { ownerAIService } from './ownerAIService';
 export { aiContentDraftsService } from './aiContentDraftsService';
 export { authService } from './authService';
 export { mediaService } from './mediaService';
+export type { MediaAsset } from './mediaService';
 export { supabase, isSupabaseConfigured, getSupabaseClient } from '../lib/supabase';
