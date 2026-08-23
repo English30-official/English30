@@ -4,8 +4,8 @@ import { LessonVideoPlayer } from './video/LessonVideoPlayer';
 
 const textOf = (block: LessonBlock) => String(block.payload.text ?? '');
 
-export const LessonBlocksRenderer: React.FC<{ blocks: LessonBlock[] }> = ({ blocks }) => {
-  const published = blocks.filter((block) => block.status === 'published' && !block.archivedAt);
+export const LessonBlocksRenderer: React.FC<{ blocks: LessonBlock[]; includeUnpublished?: boolean }> = ({ blocks, includeUnpublished = false }) => {
+  const published = blocks.filter((block) => (includeUnpublished || block.status === 'published') && block.status !== 'archived' && !block.archivedAt);
   if (!published.length) return <p className="text-sm text-slate-500">لا توجد كتل محتوى منشورة لهذا الدرس.</p>;
 
   return <div className="space-y-5">
