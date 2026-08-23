@@ -4,7 +4,7 @@ export { lessonsService } from './lessonsService';
 export { questionsService } from './questionsService';
 export { studentsService } from './studentsService';
 export { subscriptionsService } from './subscriptionsServiceSupabase';
-export { paymentService } from './paymentService';
+export { paymentService } from './paymentServiceProduction';
 export { auditService } from './auditService';
 export { ownerAIService } from './ownerAIService';
 export { authService } from './authService';
