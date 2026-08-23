@@ -726,3 +726,4 @@ export const PRICING_PLANS: PricingPlan[] = [
     isActive: true,
   },
 ];
+

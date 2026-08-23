@@ -437,6 +437,21 @@ export const OwnerSettings: React.FC = () => {
           </div>
         </div>
 
+        {/* Brand assets, SEO, footer, and maintenance */}
+        <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-2xs space-y-5">
+          <div className="flex items-center gap-2.5 border-b border-slate-100 pb-3">
+            <Globe className="w-5 h-5 text-indigo-600" />
+            <div><h3 className="font-extrabold text-base text-slate-900">الهوية المرئية وSEO وحالة المنصة</h3><p className="text-xs text-slate-500">يمكن استخدام روابط الأصول الموقعة أو العامة المختارة من مكتبة الوسائط.</p></div>
+          </div>
+          <div className="grid md:grid-cols-2 gap-4">
+            {[['logoUrl','رابط الشعار'],['faviconUrl','رابط الأيقونة Favicon'],['heroImageUrl','صورة الواجهة الرئيسية'],['openGraphImageUrl','صورة Open Graph'],['contactEmail','البريد الرسمي'],['seoTitle','عنوان SEO']].map(([key,label])=><label key={key} className="text-xs font-bold">{label}<input value={String(settings[key as keyof PlatformSettings]||'')} onChange={e=>setSettings({...settings,[key]:e.target.value})} className="mt-1 w-full px-4 py-2.5 bg-slate-50 border rounded-xl text-sm" dir={key.includes('Url')||key==='contactEmail'?'ltr':'rtl'}/></label>)}
+          </div>
+          <label className="text-xs font-bold block">وصف SEO<textarea value={settings.seoDescription||''} onChange={e=>setSettings({...settings,seoDescription:e.target.value})} rows={2} className="mt-1 w-full px-4 py-2.5 bg-slate-50 border rounded-xl text-sm"/></label>
+          <label className="text-xs font-bold block">محتوى التذييل<textarea value={settings.footerContentAr||''} onChange={e=>setSettings({...settings,footerContentAr:e.target.value})} rows={2} className="mt-1 w-full px-4 py-2.5 bg-slate-50 border rounded-xl text-sm"/></label>
+          <label className="text-xs font-bold block">صور الصفحة الرئيسية — رابط في كل سطر<textarea value={(settings.homepageImages||[]).join('\n')} onChange={e=>setSettings({...settings,homepageImages:e.target.value.split('\n').map(value=>value.trim()).filter(Boolean)})} rows={3} className="mt-1 w-full px-4 py-2.5 bg-slate-50 border rounded-xl text-sm" dir="ltr"/></label>
+          <div className="p-4 rounded-2xl bg-amber-50 border border-amber-200 space-y-3"><label className="flex items-center gap-2 text-sm font-black"><input type="checkbox" checked={settings.maintenanceMode?.enabled||false} onChange={e=>setSettings({...settings,maintenanceMode:{...settings.maintenanceMode,enabled:e.target.checked}})}/>وضع الصيانة للزوار والطلاب</label><input value={settings.maintenanceMode?.messageAr||''} onChange={e=>setSettings({...settings,maintenanceMode:{...settings.maintenanceMode,messageAr:e.target.value}})} placeholder="رسالة الصيانة" className="w-full px-4 py-2.5 bg-white border rounded-xl text-sm"/></div>
+        </div>
+
         {/* 6. Pricing FAQs Manager */}
         <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-2xs space-y-5">
           <div className="flex items-center justify-between border-b border-slate-100 pb-3">

@@ -160,9 +160,7 @@ export const Footer: React.FC<FooterProps> = ({ setActiveTab }) => {
           {/* Platform Trust & Info */}
           <div>
             <h4 className="text-white font-bold text-base mb-4">تجربة النموذج التفاعلي</h4>
-            <p className="text-xs text-slate-400 leading-relaxed mb-3">
-              منصة {settings.siteName || 'English30'} التعليمية المتقدمة لتمكين الطلاب والمهنيين من إتقان الإنجليزية باحترافية.
-            </p>
+            <p className="text-xs text-slate-400 leading-relaxed mb-3">{settings.footerContentAr || `منصة ${settings.siteName || 'English30'} التعليمية المتقدمة لتمكين الطلاب والمهنيين من إتقان الإنجليزية باحترافية.`}</p>
             <div className="flex items-center gap-2 text-xs text-slate-400 bg-slate-800/80 p-3 rounded-xl border border-slate-700">
               <Shield className="w-5 h-5 text-indigo-400 shrink-0" />
               <span>مصمم بجودة منتج تجاري حقيقي جاهز للناطقين بالعربية.</span>
@@ -174,7 +172,10 @@ export const Footer: React.FC<FooterProps> = ({ setActiveTab }) => {
         {/* Bottom copyright */}
         <div className="pt-6 flex flex-col sm:flex-row items-center justify-between text-xs text-slate-500 gap-4">
           <p>© {new Date().getFullYear()} {settings.siteName || 'English30'} - جميع الحقوق محفوظة.</p>
-          <div className="flex items-center gap-1.5 text-slate-400">
+          <div className="flex flex-wrap items-center gap-3 text-slate-400">
+            <a href="/pages/terms" className="hover:text-white">شروط الاستخدام</a>
+            <a href="/pages/privacy" className="hover:text-white">الخصوصية</a>
+            <a href="/pages/refund" className="hover:text-white">الاسترداد</a>
             <span>صُنع بـ</span>
             <Heart className="w-3.5 h-3.5 text-rose-500 fill-rose-500" />
             <span>لخدمة المتعلم العربي حول العالم</span>

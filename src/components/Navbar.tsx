@@ -13,7 +13,7 @@ interface NavbarProps {
 
 export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, stats, onSwitchToOwnerView, onAuth }) => {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const [settings, setSettings] = useState<PlatformSettings>(settingsService.getSettings());
+  const [settings, setSettings] = useState<PlatformSettings>(settingsService.getSettingsSync());
   const [signedIn, setSignedIn] = useState(false);
 
   useEffect(() => {
@@ -31,7 +31,15 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, stats, 
     { id: 'ai-tutor' as ActiveTab, labelAr: 'المعلم الذكي AI', icon: <Sparkles className="w-4 h-4 text-amber-500" /> },
     { id: 'dashboard' as ActiveTab, labelAr: 'لوحتي', icon: <BookOpen className="w-4 h-4" /> },
     { id: 'pricing' as ActiveTab, labelAr: 'الاشتراكات', icon: <CreditCard className="w-4 h-4" /> },
-  ];
+    { id: 'certificates' as ActiveTab, labelAr: 'شهاداتي', icon: <Award className="w-4 h-4" /> },
+  ].filter((item) => {
+    if (item.id === 'ai-tutor') return settings.featureFlags.ai_tutor !== false;
+    if (item.id === 'quizzes') return settings.featureFlags.quizzes !== false;
+    if (item.id === 'certificates') return settings.featureFlags.certificates !== false;
+    if (item.id === 'vocab') return settings.featureFlags.navigation_vocab !== false;
+    if (item.id === 'levels') return settings.featureFlags.navigation_levels !== false;
+    return true;
+  });
 
   const logout = async () => {
     await authService.signOut();
@@ -47,7 +55,7 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, stats, 
   return <header className="sticky top-0 z-50 bg-white/95 backdrop-blur-md border-b border-slate-200 shadow-xs">
     {settings.announcementBanner?.enabled && <div className="bg-gradient-to-r from-indigo-700 via-indigo-600 to-violet-700 text-white text-xs py-2 px-4 text-center font-bold"><span className="bg-amber-400 text-slate-950 px-2 py-0.5 rounded-full ml-2">{settings.announcementBanner.badgeTextAr || 'عرض خاص'}</span>{settings.announcementBanner.textAr}</div>}
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8"><div className="flex items-center justify-between h-16 md:h-20">
-      <div className="flex items-center gap-3 cursor-pointer" onClick={() => setActiveTab('home')}><div className="w-10 h-10 rounded-xl bg-indigo-600 flex items-center justify-center text-white font-black text-xl">30</div><div><span className="font-black text-2xl text-slate-800 font-english">{settings.siteName || 'English30'}</span><p className="text-[11px] text-slate-500 hidden sm:block">{settings.taglineAr || 'تعلم الإنجليزية بذكاء ونظام'}</p></div></div>
+      <div className="flex items-center gap-3 cursor-pointer" onClick={() => setActiveTab('home')}>{settings.logoUrl?<img src={settings.logoUrl} alt={settings.siteName} className="w-10 h-10 rounded-xl object-contain"/>:<div className="w-10 h-10 rounded-xl bg-indigo-600 flex items-center justify-center text-white font-black text-xl">30</div>}<div><span className="font-black text-2xl text-slate-800 font-english">{settings.siteName || 'English30'}</span><p className="text-[11px] text-slate-500 hidden sm:block">{settings.taglineAr || 'تعلم الإنجليزية بذكاء ونظام'}</p></div></div>
       <nav className="hidden lg:flex items-center gap-1">{navItems.map(item => <button key={item.id} onClick={() => setActiveTab(item.id)} className={`flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-bold ${activeTab === item.id ? 'bg-indigo-50 text-indigo-700' : 'text-slate-500 hover:bg-slate-50'}`}>{item.icon}{item.labelAr}</button>)}</nav>
       <div className="hidden md:flex items-center gap-2">
         <div className="px-3 py-1.5 rounded-full bg-orange-50 text-orange-600 font-bold text-xs"><Flame className="inline w-4 h-4 ml-1" />{stats.streakDays} أيام</div>

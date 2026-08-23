@@ -10,6 +10,8 @@ type CourseRow = {
   is_featured: boolean; is_free: boolean; created_by: string | null; created_at: string; updated_at: string;
   level: string | null; category: string | null; category_ar: string | null; duration_hours: number | null;
   lessons_count: number; rating: number; students_count: number;
+  thumbnail_asset_id: string | null;
+  media_assets?: { bucket_id:string; storage_path:string; file_name:string; mime_type:string|null } | null;
 };
 
 const toCourse = (row: CourseRow): Course => ({
@@ -27,6 +29,7 @@ const toCourse = (row: CourseRow): Course => ({
   rating: Number(row.rating ?? 0),
   studentsCount: Number(row.students_count ?? 0),
   image: row.image || row.thumbnail_url || '',
+  thumbnailAssetId: row.thumbnail_asset_id ?? undefined,
   color: row.color || 'indigo',
   isLocked: row.status !== 'published',
   isFree: row.is_free,
@@ -35,16 +38,23 @@ const toCourse = (row: CourseRow): Course => ({
   updatedAt: row.updated_at,
 });
 
+const hydrateThumbnail = async (row: CourseRow): Promise<Course> => {
+  const course = toCourse(row);
+  if (!row.media_assets) return course;
+  const { data, error } = await getSupabaseClient().storage.from(row.media_assets.bucket_id).createSignedUrl(row.media_assets.storage_path, 3600);
+  return !error && data?.signedUrl ? { ...course, image: data.signedUrl } : course;
+};
+
 class CoursesService {
   private courses: Course[] = [];
   private listeners: Set<CoursesListener> = new Set();
 
   public async getCourses(status?: ContentStatus): Promise<Course[]> {
     if (!isSupabaseConfigured) return [];
-    const baseQuery = getSupabaseClient().from('courses').select('*').order('sort_order', { ascending: true });
+    const baseQuery = getSupabaseClient().from('courses').select('*, media_assets(bucket_id,storage_path,file_name,mime_type)').order('sort_order', { ascending: true });
     const { data, error } = status ? await baseQuery.eq('status', status) : await baseQuery;
     if (error) throw error;
-    const courses = (data as CourseRow[]).map(toCourse);
+    const courses = await Promise.all((data as CourseRow[]).map(hydrateThumbnail));
     this.courses = courses;
     this.notify();
     return courses;
@@ -56,9 +66,9 @@ class CoursesService {
 
   public async getCourseById(id: string): Promise<Course | null> {
     if (!isSupabaseConfigured) return null;
-    const { data, error } = await getSupabaseClient().from('courses').select('*').eq('id', id).maybeSingle();
+    const { data, error } = await getSupabaseClient().from('courses').select('*, media_assets(bucket_id,storage_path,file_name,mime_type)').eq('id', id).maybeSingle();
     if (error) throw error;
-    return data ? toCourse(data as CourseRow) : null;
+    return data ? hydrateThumbnail(data as CourseRow) : null;
   }
 
   public async createCourse(data: Omit<Course, 'id'>): Promise<Course> {
@@ -71,6 +81,7 @@ class CoursesService {
       is_featured: false, is_free: data.isFree ?? false, level: data.level, category: data.category,
       category_ar: data.categoryAr, duration_hours: data.durationHours, lessons_count: data.lessonsCount ?? 0,
       rating: data.rating ?? 0, students_count: data.studentsCount ?? 0,
+      thumbnail_asset_id: data.thumbnailAssetId ?? null,
     };
     const { data: created, error } = await getSupabaseClient().from('courses').insert(row).select('*').single();
     if (error) throw error;
@@ -88,8 +99,9 @@ class CoursesService {
     if (data.descriptionAr !== undefined) row.description = data.descriptionAr;
     if (data.descriptionEn !== undefined) row.description_en = data.descriptionEn;
     if (data.image !== undefined) { row.image = data.image; row.thumbnail_url = data.image; }
+    if (data.thumbnailAssetId !== undefined) row.thumbnail_asset_id = data.thumbnailAssetId || null;
     if (data.color !== undefined) row.color = data.color;
-    if (data.status !== undefined) row.status = data.status;
+    if (data.status !== undefined) { row.status = data.status; row.archived_at = data.status === 'archived' ? new Date().toISOString() : null; }
     if (data.isFree !== undefined) row.is_free = data.isFree;
     if (data.level !== undefined) row.level = data.level;
     if (data.category !== undefined) row.category = data.category;
@@ -112,7 +124,7 @@ class CoursesService {
 
   public async deleteCourse(id: string): Promise<boolean> {
     if (!isSupabaseConfigured) throw new Error('Supabase is not configured.');
-    const { error } = await getSupabaseClient().from('courses').delete().eq('id', id);
+    const { error } = await getSupabaseClient().from('courses').update({ status: 'archived', archived_at: new Date().toISOString() }).eq('id', id);
     if (error) throw error;
     await this.getCourses();
     return true;

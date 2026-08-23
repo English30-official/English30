@@ -545,7 +545,7 @@ export const PricingView: React.FC<PricingViewProps> = ({ setActiveTab, onStartL
         </p>
 
         {/* Billing Toggle Switch */}
-        <div className="pt-4 flex items-center justify-center gap-3">
+        {settings.featureFlags.annual_subscription !== false && <div className="pt-4 flex items-center justify-center gap-3">
           <span className={`text-xs font-bold transition-colors ${!isYearly ? 'text-slate-900 font-black' : 'text-slate-400'}`}>
             اشتراك شهري
           </span>
@@ -568,7 +568,7 @@ export const PricingView: React.FC<PricingViewProps> = ({ setActiveTab, onStartL
               وفر {calculatedSavingsPct}% 🎉
             </span>
           </div>
-        </div>
+        </div>}
       </div>
 
       {/* Pricing Tiers Grid */}
@@ -719,5 +719,4 @@ export const PricingView: React.FC<PricingViewProps> = ({ setActiveTab, onStartL
     </div>
   );
 };
-
 

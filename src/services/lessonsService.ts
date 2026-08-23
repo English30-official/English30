@@ -13,6 +13,14 @@ type LessonRow = {
 };
 
 type ContentRow = { lesson_id: string; content: Partial<Lesson> & { blocks?: LessonBlock[] } };
+type BlockRow = {
+  id: string; lesson_id: string; block_type: LessonBlock['type']; title_ar: string | null;
+  title_en: string | null; order_index: number; status: ContentStatus; content: Record<string, unknown>;
+  media_asset_id: string | null; quiz_id: string | null; archived_at: string | null;
+  media_assets?: {
+    bucket_id: string; storage_path: string; file_name: string; mime_type: string | null;
+  } | null;
+};
 
 const fallbackLessons = (): Lesson[] => [
   { ...SAMPLE_LESSON, id: 'lesson-1', courseId: 'course-1', unitNumber: 1, titleAr: 'التحيات والتعريف بالنفس والأساسيات', titleEn: 'Greetings & Self Introduction A1', level: 'A1', status: 'published' },
@@ -22,7 +30,7 @@ const fallbackLessons = (): Lesson[] => [
   { ...SAMPLE_LESSON, id: 'lesson-5', courseId: 'course-3', unitNumber: 1, titleAr: 'الفرق الدقيق بين المضارع البسيط والمستمر', titleEn: 'Present Simple vs Present Continuous in Action', level: 'B1', status: 'draft' },
 ];
 
-const toLesson = (row: LessonRow, content?: ContentRow['content']): Lesson => ({
+const toLesson = (row: LessonRow, content?: ContentRow['content'], normalizedBlocks?: BlockRow[]): Lesson => ({
   id: row.id,
   courseId: row.course_id,
   titleAr: row.title_ar ?? row.title,
@@ -42,9 +50,44 @@ const toLesson = (row: LessonRow, content?: ContentRow['content']): Lesson => ({
   listeningPhrases: content?.listeningPhrases ?? [],
   quizQuestions: content?.quizQuestions ?? [],
   finalMiniTest: content?.finalMiniTest,
-  blocks: content?.blocks ?? [],
+  blocks: normalizedBlocks?.map((block) => ({
+    id: block.id, lessonId: block.lesson_id, type: block.block_type,
+    titleAr: block.title_ar ?? '', titleEn: block.title_en ?? undefined,
+    orderIndex: block.order_index, status: block.status, payload: block.content ?? {},
+    mediaAssetId: block.media_asset_id ?? undefined, quizId: block.quiz_id ?? undefined,
+    archivedAt: block.archived_at ?? undefined,
+  })) ?? content?.blocks ?? [],
   status: row.status,
 });
+
+const hydrateMediaUrls = async (lesson: Lesson, rows: BlockRow[] = []): Promise<Lesson> => {
+  const signedUrls = new Map<string, string>();
+  await Promise.all(rows.map(async (row) => {
+    const asset = row.media_assets;
+    if (!asset || signedUrls.has(row.id)) return;
+    const { data, error } = await getSupabaseClient().storage
+      .from(asset.bucket_id)
+      .createSignedUrl(asset.storage_path, 60 * 60);
+    if (!error && data?.signedUrl) signedUrls.set(row.id, data.signedUrl);
+  }));
+  return {
+    ...lesson,
+    blocks: lesson.blocks?.map((block) => {
+      const row = rows.find((candidate) => candidate.id === block.id);
+      const mediaUrl = signedUrls.get(block.id);
+      if (!row?.media_assets || !mediaUrl) return block;
+      return {
+        ...block,
+        payload: {
+          ...block.payload,
+          mediaUrl,
+          fileName: row.media_assets.file_name,
+          mimeType: row.media_assets.mime_type,
+        },
+      };
+    }),
+  };
+};
 
 class LessonsService {
   private lessons: Lesson[] = fallbackLessons();
@@ -54,22 +97,26 @@ class LessonsService {
     if (!isSupabaseConfigured) {
       let list = [...this.lessons]; if (courseId) list = list.filter((l) => l.courseId === courseId); if (status) list = list.filter((l) => l.status === status); return list;
     }
-    let query = getSupabaseClient().from('lessons').select('*, lesson_content(content)').order('sort_order', { ascending: true });
+    let query = getSupabaseClient().from('lessons').select('*, lesson_content(content), lesson_blocks(*, media_assets(bucket_id, storage_path, file_name, mime_type))').order('sort_order', { ascending: true });
     if (courseId) query = query.eq('course_id', courseId);
     if (status) query = query.eq('status', status);
     const { data, error } = await query;
     if (error) throw error;
-    const lessons = (data as Array<LessonRow & { lesson_content?: ContentRow[] }>).map((r) => toLesson(r, r.lesson_content?.[0]?.content));
+    const lessons = await Promise.all((data as Array<LessonRow & { lesson_content?: ContentRow[]; lesson_blocks?: BlockRow[] }>).map((r) => {
+      const blocks = r.lesson_blocks?.sort((a, b) => a.order_index - b.order_index) ?? [];
+      return hydrateMediaUrls(toLesson(r, r.lesson_content?.[0]?.content, blocks), blocks);
+    }));
     this.lessons = lessons; this.notify(); return lessons;
   }
 
   public async getLessonById(id: string): Promise<Lesson | null> {
     if (!isSupabaseConfigured) return this.lessons.find((l) => l.id === id) || null;
-    const { data, error } = await getSupabaseClient().from('lessons').select('*, lesson_content(content)').eq('id', id).maybeSingle();
+    const { data, error } = await getSupabaseClient().from('lessons').select('*, lesson_content(content), lesson_blocks(*, media_assets(bucket_id, storage_path, file_name, mime_type))').eq('id', id).maybeSingle();
     if (error) throw error;
     if (!data) return null;
-    const row = data as LessonRow & { lesson_content?: ContentRow[] };
-    return toLesson(row, row.lesson_content?.[0]?.content);
+    const row = data as LessonRow & { lesson_content?: ContentRow[]; lesson_blocks?: BlockRow[] };
+    const blocks = row.lesson_blocks?.sort((a, b) => a.order_index - b.order_index) ?? [];
+    return hydrateMediaUrls(toLesson(row, row.lesson_content?.[0]?.content, blocks), blocks);
   }
 
   public async createLesson(data: Omit<Lesson, 'id'>): Promise<Lesson> {
@@ -96,7 +143,7 @@ class LessonsService {
     if (data.titleAr !== undefined) row.title_ar = data.titleAr;
     if (data.titleEn !== undefined) { row.title_en = data.titleEn; row.title = data.titleEn; }
     if (data.summaryAr !== undefined) { row.summary_ar = data.summaryAr; row.description = data.summaryAr; }
-    if (data.status !== undefined) row.status = data.status;
+    if (data.status !== undefined) { row.status = data.status; row.archived_at = data.status === 'archived' ? new Date().toISOString() : null; }
     if (data.level !== undefined) row.level = data.level;
     if (data.unitNumber !== undefined) { row.unit_number = data.unitNumber; row.sort_order = data.unitNumber; }
     if (data.durationMinutes !== undefined) { row.duration_minutes = data.durationMinutes; row.estimated_minutes = data.durationMinutes; }
@@ -116,8 +163,9 @@ class LessonsService {
   public async setLessonStatus(id: string, status: ContentStatus): Promise<Lesson | null> { return this.updateLesson(id, { status }); }
 
   public async deleteLesson(id: string): Promise<boolean> {
-    if (!isSupabaseConfigured) { const old = this.lessons.length; this.lessons = this.lessons.filter((l) => l.id !== id); if (old !== this.lessons.length) this.notify(); return old !== this.lessons.length; }
-    const { error } = await getSupabaseClient().from('lessons').delete().eq('id', id); if (error) throw error; await this.getLessons(); return true;
+    if (!isSupabaseConfigured) { const old = this.lessons.length; this.lessons = this.lessons.map((l) => l.id === id ? { ...l, status: 'archived' } : l); this.notify(); return old === this.lessons.length; }
+    const { error } = await getSupabaseClient().from('lessons').update({ status: 'archived', archived_at: new Date().toISOString() }).eq('id', id);
+    if (error) throw error; await this.getLessons(); return true;
   }
 
   public subscribe(listener: LessonsListener): () => void { this.listeners.add(listener); void this.getLessons().then(listener).catch(() => listener([...this.lessons])); return () => this.listeners.delete(listener); }

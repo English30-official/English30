@@ -3,12 +3,18 @@ import { getSupabaseClient, isSupabaseConfigured } from '../lib/supabase';
 
 export const DEFAULT_PLATFORM_SETTINGS: PlatformSettings = {
   siteName: 'English30',
+  logoUrl: '', faviconUrl: '',
   taglineAr: 'منصة تعليمية عربية متكاملة لتعلم الإنجليزية في 30 درساً تفاعلياً',
   heroHeadlineAr: 'تحدث الإنجليزية بطلاقة مع منهج 30 دقيقة اليومي',
   heroSubheadlineAr: 'المنصة الأولى المصممة خصيصاً للناطقين بالعربية مع المعلم الذكي والدروس التفاعلية من A1 إلى C2',
+  heroImageUrl: '', homepageImages: [], contactEmail: '',
   registrationStatus: 'open', isRegistrationOpen: true, freeTrialLessonsCount: 3,
   contactWhatsApp: '', whatsappDefaultMessage: 'مرحباً، أود الاستفسار عن باقات ومنهج منصة English30',
   telegramChannelUrl: '', telegramBotUsername: '', youtubeUrl: '', xTwitterUrl: '', instagramUrl: '',
+  footerContentAr: 'منصة عربية لتعلّم الإنجليزية بصورة منظمة وتفاعلية.',
+  seoTitle: 'English30 | تعلّم الإنجليزية', seoDescription: 'منصة عربية متكاملة لتعلّم الإنجليزية.', openGraphImageUrl: '',
+  maintenanceMode: { enabled: false, messageAr: 'المنصة تحت الصيانة المؤقتة. نعود قريباً.' },
+  featureFlags: {},
   announcementBanner: { enabled: false, textAr: '', badgeTextAr: '', linkUrl: '' },
   pricingCurrency: 'ر.س', vatPercentage: 15, isVatInclusive: true, refundGuaranteeDays: 14,
   refundGuaranteeTitleAr: 'ضمان استرداد الأموال', refundGuaranteeDescAr: '', monthlyPlanPrice: 99, yearlyPlanPrice: 69, lifetimePlanPrice: 599,
@@ -23,10 +29,15 @@ class SettingsService {
 
   public async getSettings(): Promise<PlatformSettings> {
     if (!isSupabaseConfigured) return { ...this.settings };
-    const { data, error } = await getSupabaseClient().from('site_settings').select('key,value');
+    const [{ data, error }, { data: flags, error: flagsError }] = await Promise.all([
+      getSupabaseClient().from('site_settings').select('key,value'),
+      getSupabaseClient().from('feature_flags').select('key,enabled'),
+    ]);
     if (error) throw error;
+    if (flagsError) throw flagsError;
     const merged = { ...DEFAULT_PLATFORM_SETTINGS } as PlatformSettings;
     for (const row of data ?? []) Object.assign(merged, { [row.key]: row.value });
+    merged.featureFlags = Object.fromEntries((flags ?? []).map((flag) => [flag.key, flag.enabled]));
     this.settings = { ...merged, updatedAt: new Date().toISOString() };
     return { ...this.settings };
   }
@@ -35,10 +46,20 @@ class SettingsService {
 
   public async updateSettings(newSettings: Partial<PlatformSettings>): Promise<PlatformSettings> {
     if (!isSupabaseConfigured) { this.settings = { ...this.settings, ...newSettings, updatedAt: new Date().toISOString() }; this.notify(); return { ...this.settings }; }
-    const entries = Object.entries(newSettings).map(([key, value]) => ({ key, value, updated_at: new Date().toISOString() }));
+    const { featureFlags, updatedAt: _updatedAt, ...settingsRows } = newSettings;
+    const userId = (await getSupabaseClient().auth.getUser()).data.user?.id ?? null;
+    const entries = Object.entries(settingsRows).map(([key, value]) => ({ key, value, updated_by: userId, updated_at: new Date().toISOString() }));
     if (entries.length) {
       const { error } = await getSupabaseClient().from('site_settings').upsert(entries, { onConflict: 'key' });
       if (error) throw error;
+    }
+    if (featureFlags) {
+      const updates = Object.entries(featureFlags).map(([key, enabled]) =>
+        getSupabaseClient().from('feature_flags').update({ enabled, updated_by: userId }).eq('key', key)
+      );
+      const results = await Promise.all(updates);
+      const flagError = results.find((result) => result.error)?.error;
+      if (flagError) throw flagError;
     }
     this.settings = { ...this.settings, ...newSettings, updatedAt: new Date().toISOString() };
     this.notify(); return { ...this.settings };
@@ -47,7 +68,7 @@ class SettingsService {
   public subscribe(listener: SettingsListener): () => void {
     this.listeners.add(listener);
     void this.getSettings().then(listener).catch(() => listener(this.getSettingsSync()));
-    return () => this.listeners.delete(listener);
+    return () => { this.listeners.delete(listener); };
   }
   private notify() { const current = this.getSettingsSync(); this.listeners.forEach((listener) => listener(current)); }
 }

@@ -19,6 +19,10 @@ export function useOwnerCoursesCMS() {
     const status = await ownerCoursesService.toggleLessonStatus(lesson);
     setLessons((current) => current.map((item) => item.id === lesson.id ? { ...item, status } : item));
   };
+  const handleSetLessonStatus = async (lesson: Lesson, status: ContentStatus) => {
+    await ownerCoursesService.setLessonStatus(lesson, status);
+    setLessons((current) => current.map((item) => item.id === lesson.id ? { ...item, status } : item));
+  };
   const handleCreateLesson = async (event: FormEvent) => {
     event.preventDefault(); if (!selectedCourse) return;
     const created = await ownerCoursesService.createLesson({ courseId: selectedCourse.id, ...newLessonData,
@@ -30,5 +34,5 @@ export function useOwnerCoursesCMS() {
   const filteredLessons = useMemo(() => statusFilter === 'all' ? lessons : lessons.filter((lesson) => lesson.status === statusFilter), [lessons, statusFilter]);
   return { courses, lessons, selectedCourse, statusFilter, setStatusFilter, isCreatingLesson, setIsCreatingLesson,
     newLessonData, setNewLessonData, previewLesson, setPreviewLesson, filteredLessons,
-    handleSelectCourse, handleToggleLessonStatus, handleCreateLesson };
+    handleSelectCourse, handleToggleLessonStatus, handleSetLessonStatus, handleCreateLesson };
 }

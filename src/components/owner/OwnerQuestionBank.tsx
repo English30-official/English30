@@ -8,6 +8,9 @@ import {
   Tag,
   Sparkles,
   BookOpen,
+  Archive,
+  RotateCcw,
+  Eye,
 } from 'lucide-react';
 import { questionsService, auditService } from '../../services';
 import { BankQuestion, LevelCode, QuestionType } from '../../types';
@@ -77,10 +80,10 @@ export const OwnerQuestionBank: React.FC = () => {
     );
   };
 
-  const handleDelete = async (id: string) => {
-    if (!confirm('هل أنت متأكد من رغبتك في حذف هذا السؤال من بنك الأسئلة؟')) return;
-    await questionsService.deleteQuestion(id);
-    setQuestions((prev) => prev.filter((q) => q.id !== id));
+  const setStatus = async (id: string, status: 'draft'|'preview'|'published'|'archived') => {
+    if (status === 'archived' && !confirm('أرشفة السؤال؟ يمكن استعادته لاحقًا.')) return;
+    await questionsService.setStatus(id, status);
+    setQuestions(await questionsService.getQuestions());
   };
 
   const filteredQuestions = questions.filter((q) => {
@@ -182,15 +185,13 @@ export const OwnerQuestionBank: React.FC = () => {
                   <span className="text-xs font-semibold px-2 py-0.5 rounded-md bg-violet-50 text-violet-700">
                     {q.category}
                   </span>
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-amber-50 text-amber-700">{q.status ?? 'draft'}</span>
                 </div>
 
-                <button
-                  onClick={() => handleDelete(q.id)}
-                  className="text-rose-500 hover:text-rose-700 p-1.5 rounded-lg hover:bg-rose-50 transition-colors self-end sm:self-auto cursor-pointer"
-                  title="حذف السؤال"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
+                <div className="flex items-center gap-1">
+                  {q.status !== 'archived' && <><button onClick={() => void setStatus(q.id,'preview')} className="p-1.5 rounded-lg hover:bg-indigo-50 text-indigo-600" title="معاينة"><Eye className="w-4 h-4"/></button><button onClick={() => void setStatus(q.id,'published')} className="p-1.5 rounded-lg hover:bg-emerald-50 text-emerald-600" title="نشر"><CheckCircle2 className="w-4 h-4"/></button><button onClick={() => void setStatus(q.id,'archived')} className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-600" title="أرشفة"><Archive className="w-4 h-4"/></button></>}
+                  {q.status === 'archived' && <button onClick={() => void setStatus(q.id,'draft')} className="p-1.5 rounded-lg hover:bg-indigo-50 text-indigo-600" title="استعادة"><RotateCcw className="w-4 h-4"/></button>}
+                </div>
               </div>
 
               {/* Prompt */}

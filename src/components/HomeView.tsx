@@ -72,7 +72,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
 
           {/* Headline */}
           <h1 className="text-3xl sm:text-5xl lg:text-6xl font-black tracking-tight leading-tight sm:leading-tight text-slate-800">
-            {settings.heroHeadingAr || (
+            {settings.heroHeadlineAr || (
               <>
                 تعلم الإنجليزية بأسلوب <span className="text-indigo-600 font-english">{settings.siteName || 'English30'}</span>
                 <br className="hidden sm:inline" /> المنظم والتدريجي
@@ -82,7 +82,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
 
           {/* Subtitle */}
           <p className="text-base sm:text-lg text-slate-500 font-normal leading-relaxed max-w-2xl mx-auto">
-            {settings.heroSubtitleAr || 'من المبتدئ تماماً (A1) حتى الطلاقة التامة (C2). شرح عربي مبسط، تمارين تفاعلية، ومعلم ذكي بـ 30 دقيقة يومياً فقط.'}
+            {settings.heroSubheadlineAr || 'من المبتدئ تماماً (A1) حتى الطلاقة التامة (C2). شرح عربي مبسط، تمارين تفاعلية، ومعلم ذكي بـ 30 دقيقة يومياً فقط.'}
           </p>
 
           {/* Hero CTAs */}
@@ -103,6 +103,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
               <span>اختبار تحديد المستوى (5 دقائق)</span>
             </button>
           </div>
+          {settings.heroImageUrl && <img src={settings.heroImageUrl} alt="" className="mt-8 w-full max-h-80 object-cover rounded-3xl border" />}
 
           {/* Quick Highlight Stats */}
           <div className="pt-8 grid grid-cols-2 sm:grid-cols-4 gap-4 max-w-3xl mx-auto border-t border-slate-100 text-right sm:text-center">
