@@ -79,7 +79,7 @@ export default function App() {
             {activeTab === 'home' && <HomeView setActiveTab={setActiveTab} onSelectCourse={handleSelectCourse} onStartLesson={() => setActiveTab('lesson')} />}
             {activeTab === 'levels' && <LevelsView setActiveTab={setActiveTab} />}
             {activeTab === 'courses' && <CoursesView setActiveTab={setActiveTab} onSelectCourse={handleSelectCourse} />}
-            {activeTab === 'lesson' && <LessonView setActiveTab={setActiveTab} onLessonCompleted={handleLessonCompleted} />}
+            {activeTab === 'lesson' && <LessonView courseId={selectedCourse.id} setActiveTab={setActiveTab} onLessonCompleted={handleLessonCompleted} />}
             {activeTab === 'placement-test' && <PlacementTestView setActiveTab={setActiveTab} onPlacementComplete={handlePlacementComplete} />}
             {activeTab === 'dashboard' && <DashboardView stats={stats} setActiveTab={setActiveTab} onStartLesson={() => setActiveTab('lesson')} />}
             {activeTab === 'vocab' && <VocabView />}
