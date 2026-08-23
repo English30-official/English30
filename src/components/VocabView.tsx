@@ -287,4 +287,3 @@ export const VocabView: React.FC = () => {
     </div>
   );
 };
-

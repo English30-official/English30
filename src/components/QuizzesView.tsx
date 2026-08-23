@@ -206,4 +206,3 @@ export const QuizzesView: React.FC<QuizzesViewProps> = ({ onEarnXP }) => {
     </div>
   );
 };
-

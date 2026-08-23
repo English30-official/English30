@@ -261,4 +261,3 @@ export const OwnerAIAssistant: React.FC = () => {
     </div>
   );
 };
-

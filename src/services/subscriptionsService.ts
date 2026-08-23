@@ -119,4 +119,3 @@ class SubscriptionsService {
 }
 
 export const subscriptionsService = new SubscriptionsService();
-

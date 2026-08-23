@@ -97,4 +97,3 @@ export const OwnerAuditLogs: React.FC = () => {
     </div>
   );
 };
-
