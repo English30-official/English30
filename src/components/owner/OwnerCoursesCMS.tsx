@@ -1,127 +1,18 @@
-import React, { useState, useEffect } from 'react';
+import React from 'react';
 import {
-  BookOpen,
-  Plus,
-  CheckCircle,
-  Clock,
-  Archive,
-  Edit3,
-  Trash2,
-  Eye,
-  Layers,
-  Sparkles,
-  Video,
-  FileText,
-  HelpCircle,
-  Volume2,
-  Check,
-  ChevronLeft,
+  BookOpen, Plus, CheckCircle, Clock, Archive, Edit3, Trash2, Eye, Layers,
+  Sparkles, Video, FileText, HelpCircle, Volume2, Check, ChevronLeft,
 } from 'lucide-react';
-import { coursesService, lessonsService, auditService } from '../../services';
-import { Course, Lesson, ContentStatus, LevelCode, LessonBlock } from '../../types';
+import { ContentStatus } from '../../types';
+import { useOwnerCoursesCMS } from '../../hooks/useOwnerCoursesCMS';
 
 export const OwnerCoursesCMS: React.FC = () => {
-  const [courses, setCourses] = useState<Course[]>([]);
-  const [lessons, setLessons] = useState<Lesson[]>([]);
-  const [selectedCourse, setSelectedCourse] = useState<Course | null>(null);
-  const [statusFilter, setStatusFilter] = useState<ContentStatus | 'all'>('all');
-  
-  // Modal / Form state
-  const [isCreatingLesson, setIsCreatingLesson] = useState(false);
-  const [newLessonData, setNewLessonData] = useState({
-    titleAr: '',
-    titleEn: '',
-    level: 'A1' as LevelCode,
-    unitNumber: 1,
-    durationMinutes: 15,
-    summaryAr: '',
-    arabicExplanation: '',
-    status: 'draft' as ContentStatus,
-  });
-
-  const [previewLesson, setPreviewLesson] = useState<Lesson | null>(null);
-
-  useEffect(() => {
-    async function load() {
-      const c = await coursesService.getCourses();
-      setCourses(c);
-      if (c.length > 0) {
-        setSelectedCourse(c[0]);
-        const l = await lessonsService.getLessons(c[0].id);
-        setLessons(l);
-      }
-    }
-    load();
-  }, []);
-
-  const handleSelectCourse = async (course: Course) => {
-    setSelectedCourse(course);
-    const l = await lessonsService.getLessons(course.id);
-    setLessons(l);
-  };
-
-  const handleToggleLessonStatus = async (lesson: Lesson) => {
-    const nextStatus: ContentStatus = lesson.status === 'published' ? 'draft' : 'published';
-    await lessonsService.setLessonStatus(lesson.id, nextStatus);
-    
-    // Update local state
-    setLessons((prev) =>
-      prev.map((l) => (l.id === lesson.id ? { ...l, status: nextStatus } : l))
-    );
-
-    await auditService.logAction(
-      nextStatus === 'published' ? 'PUBLISH_LESSON' : 'UNPUBLISH_LESSON',
-      'lessons',
-      lesson.titleAr,
-      `تم تغيير حالة الدرس إلى ${nextStatus === 'published' ? 'منشور (Published)' : 'مسودة (Draft)'}`
-    );
-  };
-
-  const handleCreateLesson = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedCourse) return;
-
-    const created = await lessonsService.createLesson({
-      courseId: selectedCourse.id,
-      titleAr: newLessonData.titleAr,
-      titleEn: newLessonData.titleEn,
-      level: newLessonData.level,
-      unitNumber: Number(newLessonData.unitNumber),
-      durationMinutes: Number(newLessonData.durationMinutes),
-      summaryAr: newLessonData.summaryAr,
-      arabicExplanation: newLessonData.arabicExplanation,
-      vocabList: [],
-      grammarRules: [],
-      listeningPhrases: [],
-      quizQuestions: [],
-      status: newLessonData.status,
-    });
-
-    setLessons((prev) => [created, ...prev]);
-    setIsCreatingLesson(false);
-    setNewLessonData({
-      titleAr: '',
-      titleEn: '',
-      level: 'A1',
-      unitNumber: lessons.length + 1,
-      durationMinutes: 15,
-      summaryAr: '',
-      arabicExplanation: '',
-      status: 'draft',
-    });
-
-    await auditService.logAction(
-      'CREATE_LESSON',
-      'lessons',
-      created.titleAr,
-      `تم إنشاء درس جديد بحالة ${created.status}`
-    );
-  };
-
-  const filteredLessons = lessons.filter((l) => {
-    if (statusFilter === 'all') return true;
-    return l.status === statusFilter;
-  });
+  const {
+    courses, lessons, selectedCourse, statusFilter, setStatusFilter,
+    isCreatingLesson, setIsCreatingLesson, newLessonData, setNewLessonData,
+    previewLesson, setPreviewLesson, filteredLessons, handleSelectCourse,
+    handleToggleLessonStatus, handleCreateLesson,
+  } = useOwnerCoursesCMS();
 
   return (
     <div className="space-y-8 animate-fadeIn" dir="rtl">
@@ -479,3 +370,5 @@ export const OwnerCoursesCMS: React.FC = () => {
     </div>
   );
 };
+
+
