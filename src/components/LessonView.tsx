@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { ActiveTab, Lesson, VocabItem, SentenceItem, FillInBlankQuestion, QuizQuestion } from '../types';
-import { lessonsService, progressService } from '../services';
+import { entitlementService, lessonsService, progressService } from '../services';
 import { playAudioItem } from '../lib/speech';
 import confetti from 'canvas-confetti';
 import { Volume2, CheckCircle2, ArrowRight, Film, Play } from 'lucide-react';
@@ -21,7 +21,15 @@ export const LessonView: React.FC<LessonViewProps> = ({ lesson: providedLesson, 
     let mounted=true;
     const load=async()=>{
       setLoading(true); setLoadError('');
-      try { const data=await lessonsService.getLessons(courseId,'published'); if(mounted)setLesson(data[0]??null); }
+      try {
+        const data=await lessonsService.getLessons(courseId,'published');
+        const nextLesson=data[0]??null;
+        if(nextLesson){
+          const entitlement=await entitlementService.canAccessLesson(nextLesson.id);
+          if(!entitlement.allowed) throw new Error(entitlement.reason==='suspended'?'تم إيقاف حسابك.':'يتطلب هذا الدرس اشتراكًا فعالًا.');
+        }
+        if(mounted)setLesson(nextLesson);
+      }
       catch(e){if(mounted)setLoadError(e instanceof Error?e.message:'تعذر تحميل الدرس.');}
       finally{if(mounted)setLoading(false);}
     };

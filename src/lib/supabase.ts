@@ -6,7 +6,22 @@ const supabasePublishableKey =
   import.meta.env.VITE_SUPABASE_ANON_KEY ||
   '';
 
-export const isSupabaseConfigured = Boolean(supabaseUrl && supabasePublishableKey);
+const hasValidSupabaseUrl = /^https:\/\/[a-z0-9-]+\.supabase\.co$/i.test(supabaseUrl);
+const hasValidPublishableKey = Boolean(
+  supabasePublishableKey
+  && !supabasePublishableKey.includes('your-supabase')
+  && supabasePublishableKey.length >= 30
+);
+
+export const isSupabaseConfigured = hasValidSupabaseUrl && hasValidPublishableKey;
+export const isDevelopmentFallbackEnabled =
+  import.meta.env.DEV && import.meta.env.VITE_ENABLE_DEV_FALLBACK === 'true';
+
+if (!isSupabaseConfigured && !isDevelopmentFallbackEnabled) {
+  throw new Error(
+    'Missing required Supabase configuration. Set VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY.'
+  );
+}
 
 /**
  * Singleton Supabase Client for English30

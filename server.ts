@@ -1,23 +1,125 @@
-import express from 'express';
+import express, { NextFunction, Request, RequestHandler, Response } from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI } from '@google/genai';
 import dotenv from 'dotenv';
+import { createClient, User } from '@supabase/supabase-js';
 
 dotenv.config();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+type AuthenticatedRequest = Request & { authUser?: User };
+
+const rateBuckets = new Map<string, { count: number; resetAt: number }>();
+
+function rateLimit(limit: number, windowMs: number): RequestHandler {
+  return (req, res, next) => {
+    const userId = (req as AuthenticatedRequest).authUser?.id;
+    const key = `${req.path}:${userId ?? req.ip}`;
+    const now = Date.now();
+    const bucket = rateBuckets.get(key);
+    if (!bucket || bucket.resetAt <= now) {
+      rateBuckets.set(key, { count: 1, resetAt: now + windowMs });
+      return next();
+    }
+    if (bucket.count >= limit) {
+      res.setHeader('Retry-After', String(Math.ceil((bucket.resetAt - now) / 1000)));
+      return res.status(429).json({ error: 'تم تجاوز حد الطلبات. حاول لاحقًا.' });
+    }
+    bucket.count += 1;
+    return next();
+  };
+}
+
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const parsedPort = Number(process.env.PORT ?? 3000);
+  if (!Number.isInteger(parsedPort) || parsedPort < 1 || parsedPort > 65535) {
+    throw new Error('PORT must be a valid TCP port.');
+  }
+  const PORT = parsedPort;
+  const isProduction = process.env.NODE_ENV === 'production';
+  const supabaseUrl = process.env.SUPABASE_URL || (!isProduction ? process.env.VITE_SUPABASE_URL : undefined);
+  const supabaseKey = process.env.SUPABASE_PUBLISHABLE_KEY || (!isProduction ? (process.env.VITE_SUPABASE_PUBLISHABLE_KEY || process.env.VITE_SUPABASE_ANON_KEY) : undefined);
 
-  app.use(express.json());
+  const validSupabaseUrl = Boolean(supabaseUrl && /^https:\/\/[a-z0-9-]+\.supabase\.co$/i.test(supabaseUrl));
+  const validSupabaseKey = Boolean(supabaseKey && !supabaseKey.includes('your-supabase') && supabaseKey.length >= 30);
+  if (!validSupabaseUrl || !validSupabaseKey || !supabaseUrl || !supabaseKey) {
+    throw new Error('Missing required server Supabase configuration: SUPABASE_URL and SUPABASE_PUBLISHABLE_KEY.');
+  }
+
+  const authClient = createClient(supabaseUrl, supabaseKey, {
+    auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+  });
+
+  const requireActiveUser = async (req: Request, res: Response, next: NextFunction) => {
+    const authorization = req.header('authorization') || '';
+    const token = authorization.startsWith('Bearer ') ? authorization.slice(7).trim() : '';
+    if (!token) return res.status(401).json({ error: 'Authentication required.' });
+
+    const { data, error } = await authClient.auth.getUser(token);
+    if (error || !data.user) return res.status(401).json({ error: 'Invalid or expired access token.' });
+
+    const userClient = createClient(supabaseUrl, supabaseKey, {
+      auth: { persistSession: false, autoRefreshToken: false },
+      global: { headers: { Authorization: `Bearer ${token}` } },
+    });
+    const { data: profile, error: profileError } = await userClient
+      .from('profiles')
+      .select('is_active,is_suspended')
+      .eq('id', data.user.id)
+      .maybeSingle();
+    if (profileError) return res.status(503).json({ error: 'Unable to verify account status.' });
+    if (!profile || profile.is_active === false || profile.is_suspended === true) {
+      return res.status(403).json({ error: 'Account is suspended.' });
+    }
+
+    (req as AuthenticatedRequest).authUser = data.user;
+    res.locals.userClient = userClient;
+    return next();
+  };
+
+  const requireStaff = async (req: Request, res: Response, next: NextFunction) => {
+    const userId = (req as AuthenticatedRequest).authUser?.id;
+    if (!userId) return res.status(401).json({ error: 'Authentication required.' });
+    const { data, error } = await res.locals.userClient
+      .from('user_roles')
+      .select('role')
+      .eq('user_id', userId)
+      .in('role', ['owner', 'admin'])
+      .limit(1)
+      .maybeSingle();
+    if (error) return res.status(503).json({ error: 'Unable to verify authorization.' });
+    if (!data) return res.status(403).json({ error: 'Owner or admin access required.' });
+    return next();
+  };
+
+  const requireGemini: RequestHandler = (_req, res, next) => {
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey || apiKey === 'MY_GEMINI_API_KEY') {
+      return res.status(503).json({ error: 'AI service is not configured.' });
+    }
+    return next();
+  };
+
+  app.disable('x-powered-by');
+  app.set('trust proxy', 1);
+  app.use((_req, res, next) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'DENY');
+    res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+    res.setHeader('Permissions-Policy', 'camera=(), geolocation=(), payment=()');
+    if (isProduction) res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+    next();
+  });
+  app.use('/api', (_req, res, next) => { res.setHeader('Cache-Control', 'no-store'); next(); });
+  app.use(express.json({ limit: '100kb' }));
 
   // API Route for AI English Tutor (Arabic friendly)
-  app.post('/api/ai-tutor', async (req, res) => {
+  app.post('/api/ai-tutor', requireActiveUser, rateLimit(30, 60_000), requireGemini, async (req, res) => {
     try {
       const { message, history } = req.body;
 
@@ -125,7 +227,7 @@ async function startServer() {
   });
 
   // API Route for Dynamic AI Learning Pack Generator
-  app.post('/api/generate-lesson-pack', async (req, res) => {
+  app.post('/api/generate-lesson-pack', requireActiveUser, requireStaff, rateLimit(10, 5 * 60_000), requireGemini, async (req, res) => {
     try {
       const { topic, level, wordCount = 10, sentenceCount = 5 } = req.body;
 
@@ -299,7 +401,7 @@ async function startServer() {
 
 
   // API Route for Owner AI Assistant (Lesson CMS generation, Question Bank generation, Analytics)
-  app.post('/api/owner-ai', async (req, res) => {
+  app.post('/api/owner-ai', requireActiveUser, requireStaff, rateLimit(20, 5 * 60_000), requireGemini, async (req, res) => {
     try {
       const { taskType, prompt, level = 'B1' } = req.body;
 
@@ -419,7 +521,7 @@ async function startServer() {
   });
 
   // Serve Vite in development mode
-  if (process.env.NODE_ENV !== 'production') {
+  if (!isProduction) {
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: 'spa',
