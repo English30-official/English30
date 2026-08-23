@@ -47,11 +47,20 @@ class AuthService {
 
   public async claimFirstOwner(): Promise<boolean> {
     if (!isSupabaseConfigured) throw new Error('Supabase is not configured.');
-    const { data, error } = await getSupabaseClient().rpc('claim_first_owner');
-    if (error) throw error;
-    const user = await this.getUser();
-    if (user) this.roleCache.delete(user.id);
-    return data === true;
+    const session = await this.getSession();
+    if (!session) throw new Error('سجّل الدخول أولاً ثم فعّل حساب المالك.');
+    const { data: { url } } = { data: { url: `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/claim-first-owner` } };
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.error || 'تعذر تفعيل حساب المالك.');
+    if (payload.claimed === true) {
+      this.roleCache.delete(session.user.id);
+      this.listeners.forEach((listener) => listener(session));
+    }
+    return payload.claimed === true;
   }
 
   public async getRole(userId?: string): Promise<UserRole | null> {
