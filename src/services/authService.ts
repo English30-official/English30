@@ -4,6 +4,11 @@ import { UserRole } from '../types';
 
 type AuthStateListener = (session: Session | null, event?: AuthChangeEvent) => void;
 
+export interface FirstOwnerClaimAvailability {
+  open: boolean;
+  eligible: boolean;
+}
+
 class AuthService {
   private listeners = new Set<AuthStateListener>();
   private initialized = false;
@@ -83,6 +88,63 @@ class AuthService {
 
   public async isOwner(userId?: string) {
     return (await this.getRole(userId)) === 'owner';
+  }
+
+  private async getFunctionErrorMessage(error: unknown, fallback: string): Promise<string> {
+    if (error && typeof error === 'object' && 'context' in error) {
+      const context = (error as { context?: unknown }).context;
+      if (context instanceof Response) {
+        const payload = await context.clone().json().catch(() => null) as { error?: unknown } | null;
+        if (typeof payload?.error === 'string' && payload.error.trim()) return payload.error;
+      }
+    }
+    if (error instanceof Error && error.message) return error.message;
+    return fallback;
+  }
+
+  public async getFirstOwnerClaimAvailability(): Promise<FirstOwnerClaimAvailability> {
+    if (!isSupabaseConfigured) return { open: false, eligible: false };
+    const session = await this.getSession();
+    if (!session?.access_token) throw new Error('يجب تسجيل الدخول أولاً للتحقق من إمكانية تفعيل حساب المالك.');
+
+    const { data, error } = await getSupabaseClient().functions.invoke<FirstOwnerClaimAvailability>(
+      'claim-first-owner',
+      {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      },
+    );
+    if (error) {
+      throw new Error(await this.getFunctionErrorMessage(error, 'تعذر التحقق من حالة تفعيل المالك.'));
+    }
+    return {
+      open: data?.open === true,
+      eligible: data?.eligible === true,
+    };
+  }
+
+  public async claimFirstOwner(): Promise<void> {
+    if (!isSupabaseConfigured) throw new Error('Supabase is not configured.');
+    const session = await this.getSession();
+    if (!session?.access_token || !session.user) throw new Error('يجب تسجيل الدخول أولاً لتفعيل حساب المالك.');
+
+    const { data, error } = await getSupabaseClient().functions.invoke<{ claimed?: boolean }>(
+      'claim-first-owner',
+      {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${session.access_token}` },
+        body: {},
+      },
+    );
+    if (error) {
+      const message = await this.getFunctionErrorMessage(error, 'تعذر تفعيل حساب المالك.');
+      if (message.includes('already closed')) throw new Error('تم إغلاق تفعيل المالك لأن مالكًا أو مديرًا موجود بالفعل.');
+      if (message.includes('not authorized')) throw new Error('هذا الحساب غير مصرح له بتفعيل حساب المالك.');
+      if (message.includes('suspended')) throw new Error('لا يمكن للحساب الموقوف تفعيل حساب المالك.');
+      throw new Error(message);
+    }
+    if (data?.claimed !== true) throw new Error('لم يؤكد الخادم نجاح تفعيل حساب المالك.');
+    this.roleCache.delete(session.user.id);
   }
 
   public async signOut() {
