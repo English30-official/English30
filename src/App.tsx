@@ -15,6 +15,7 @@ import { AITutorView } from './components/AITutorView';
 import { PricingView } from './components/PricingView';
 import { OwnerDashboard } from './components/owner/OwnerDashboard';
 import { AuthView } from './components/AuthView';
+import { FirstOwnerActivation } from './components/FirstOwnerActivation';
 import { useAuth } from './auth/AuthContext';
 
 export default function App() {
@@ -38,6 +39,7 @@ export default function App() {
     <div className="min-h-screen bg-slate-50 text-slate-900 font-sans flex flex-col justify-between selection:bg-indigo-500 selection:text-white" dir="rtl">
       <Navbar activeTab={activeTab} setActiveTab={setActiveTab} stats={stats} onAuth={() => setShowAuth(true)} onSwitchToOwnerView={!authLoading && isStaff ? () => setAppMode('owner') : undefined} />
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-4">
+        {!showAuth && !isPasswordRecovery && <FirstOwnerActivation onClaimed={() => setAppMode('owner')} />}
         {isPasswordRecovery ? <AuthView recoveryMode onAuthenticated={() => setShowAuth(false)} /> : isSuspended && (isProtectedTab || appMode === 'owner') ? (
           <div className="max-w-xl mx-auto my-16 bg-red-50 border border-red-200 text-red-800 rounded-3xl p-8 text-center space-y-4" dir="rtl">
             <h1 className="text-xl font-black">تم إيقاف الحساب</h1>

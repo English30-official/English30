@@ -21,6 +21,8 @@ interface AuthContextValue {
   finishPasswordRecovery(): void;
   signOut(): Promise<void>;
   refreshRole(): Promise<void>;
+  checkFirstOwnerClaimAvailability(): Promise<boolean>;
+  claimFirstOwner(): Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
@@ -75,6 +77,14 @@ export const AuthProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
     finishPasswordRecovery() { setIsPasswordRecovery(false); },
     async signOut() { await authService.signOut(); },
     async refreshRole() { await loadRole(session); },
+    async checkFirstOwnerClaimAvailability() {
+      const availability = await authService.getFirstOwnerClaimAvailability();
+      return availability.open && availability.eligible;
+    },
+    async claimFirstOwner() {
+      await authService.claimFirstOwner();
+      await loadRole(session);
+    },
   }), [session, role, isLoading, isSuspended, isPasswordRecovery]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
