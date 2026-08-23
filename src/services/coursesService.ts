@@ -1,5 +1,4 @@
 import { Course, ContentStatus, LevelCode } from '../types';
-import { COURSES_DATA } from '../data/mockData';
 import { getSupabaseClient, isSupabaseConfigured } from '../lib/supabase';
 
 type CoursesListener = (courses: Course[]) => void;
@@ -12,14 +11,6 @@ type CourseRow = {
   level: string | null; category: string | null; category_ar: string | null; duration_hours: number | null;
   lessons_count: number; rating: number; students_count: number;
 };
-
-const fallbackCourses = (): Course[] => COURSES_DATA.map((c) => ({
-  ...c,
-  status: c.isLocked ? 'draft' : 'published',
-  isFree: c.id === 'course-1',
-  createdAt: new Date().toISOString(),
-  updatedAt: new Date().toISOString(),
-}));
 
 const toCourse = (row: CourseRow): Course => ({
   id: row.id,
@@ -34,7 +25,7 @@ const toCourse = (row: CourseRow): Course => ({
   durationHours: Number(row.duration_hours ?? 0),
   lessonsCount: row.lessons_count ?? 0,
   rating: Number(row.rating ?? 0),
-  studentsCount: row.students_count ?? 0,
+  studentsCount: Number(row.students_count ?? 0),
   image: row.image || row.thumbnail_url || '',
   color: row.color || 'indigo',
   isLocked: row.status !== 'published',
@@ -45,15 +36,13 @@ const toCourse = (row: CourseRow): Course => ({
 });
 
 class CoursesService {
-  private courses: Course[] = fallbackCourses();
+  private courses: Course[] = [];
   private listeners: Set<CoursesListener> = new Set();
 
   public async getCourses(status?: ContentStatus): Promise<Course[]> {
-    if (!isSupabaseConfigured) {
-      return status ? this.courses.filter((c) => c.status === status) : [...this.courses];
-    }
-    const query = getSupabaseClient().from('courses').select('*').order('sort_order', { ascending: true });
-    const { data, error } = status ? await query.eq('status', status) : await query;
+    if (!isSupabaseConfigured) return [];
+    const baseQuery = getSupabaseClient().from('courses').select('*').order('sort_order', { ascending: true });
+    const { data, error } = status ? await baseQuery.eq('status', status) : await baseQuery;
     if (error) throw error;
     const courses = (data as CourseRow[]).map(toCourse);
     this.courses = courses;
@@ -66,17 +55,14 @@ class CoursesService {
   }
 
   public async getCourseById(id: string): Promise<Course | null> {
-    if (!isSupabaseConfigured) return this.courses.find((c) => c.id === id) || null;
+    if (!isSupabaseConfigured) return null;
     const { data, error } = await getSupabaseClient().from('courses').select('*').eq('id', id).maybeSingle();
     if (error) throw error;
     return data ? toCourse(data as CourseRow) : null;
   }
 
   public async createCourse(data: Omit<Course, 'id'>): Promise<Course> {
-    if (!isSupabaseConfigured) {
-      const newCourse = { ...data, id: `course-${Date.now()}`, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
-      this.courses = [newCourse, ...this.courses]; this.notify(); return newCourse;
-    }
+    if (!isSupabaseConfigured) throw new Error('Supabase is not configured.');
     const row = {
       slug: data.slug || `course-${Date.now()}`, title: data.titleEn || data.titleAr,
       title_ar: data.titleAr, title_en: data.titleEn, description: data.descriptionAr,
@@ -88,14 +74,13 @@ class CoursesService {
     };
     const { data: created, error } = await getSupabaseClient().from('courses').insert(row).select('*').single();
     if (error) throw error;
-    const course = toCourse(created as CourseRow); await this.getCourses(); return course;
+    const course = toCourse(created as CourseRow);
+    await this.getCourses();
+    return course;
   }
 
   public async updateCourse(id: string, data: Partial<Course>): Promise<Course | null> {
-    if (!isSupabaseConfigured) {
-      const idx = this.courses.findIndex((c) => c.id === id); if (idx === -1) return null;
-      this.courses[idx] = { ...this.courses[idx], ...data, updatedAt: new Date().toISOString() }; this.notify(); return this.courses[idx];
-    }
+    if (!isSupabaseConfigured) throw new Error('Supabase is not configured.');
     const row: Record<string, unknown> = {};
     if (data.slug !== undefined) row.slug = data.slug;
     if (data.titleAr !== undefined) row.title_ar = data.titleAr;
@@ -116,7 +101,9 @@ class CoursesService {
     const { data: updated, error } = await getSupabaseClient().from('courses').update(row).eq('id', id).select('*').maybeSingle();
     if (error) throw error;
     if (!updated) return null;
-    const course = toCourse(updated as CourseRow); await this.getCourses(); return course;
+    const course = toCourse(updated as CourseRow);
+    await this.getCourses();
+    return course;
   }
 
   public async setCourseStatus(id: string, status: ContentStatus): Promise<Course | null> {
@@ -124,19 +111,23 @@ class CoursesService {
   }
 
   public async deleteCourse(id: string): Promise<boolean> {
-    if (!isSupabaseConfigured) {
-      const old = this.courses.length; this.courses = this.courses.filter((c) => c.id !== id); if (old !== this.courses.length) this.notify(); return old !== this.courses.length;
-    }
+    if (!isSupabaseConfigured) throw new Error('Supabase is not configured.');
     const { error } = await getSupabaseClient().from('courses').delete().eq('id', id);
-    if (error) throw error; await this.getCourses(); return true;
+    if (error) throw error;
+    await this.getCourses();
+    return true;
   }
 
   public subscribe(listener: CoursesListener): () => void {
-    this.listeners.add(listener); void this.getCourses().then(listener).catch(() => listener([...this.courses]));
+    this.listeners.add(listener);
+    void this.getCourses().then(listener).catch(() => listener([]));
     return () => this.listeners.delete(listener);
   }
 
-  private notify() { const list = [...this.courses]; this.listeners.forEach((l) => l(list)); }
+  private notify() {
+    const list = [...this.courses];
+    this.listeners.forEach((listener) => listener(list));
+  }
 }
 
 export const coursesService = new CoursesService();
