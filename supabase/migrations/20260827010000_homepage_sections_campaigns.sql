@@ -110,7 +110,7 @@ create table if not exists public.campaigns (
   priority integer not null default 0 check (priority between -10000 and 10000),
   start_at timestamptz not null,
   end_at timestamptz not null,
-  timezone text not null default 'Asia/Riyadh' check (length(timezone) between 1 and 80),
+  timezone text not null default 'Asia/Riyadh' check (timezone in ('Asia/Riyadh','UTC','Asia/Dubai')),
   preset text not null default 'clean_modern' check (preset in (
     'elegant_academic','bold_promotion','minimal','premium','saudi_national_day',
     'ramadan','black_friday','course_launch','clean_modern','youthful_learning',
@@ -193,7 +193,7 @@ begin
   if p_section_type not in ('hero','announcement_bar','promotional_banner','image_carousel','featured_course','course_grid','course_carousel','benefits','statistics','testimonials','video','image_text_split','text_content','cta','faq','logos','trust_badges','countdown','pricing_highlight','placement_test','certificate_promotion','app_promo','blog_teaser','custom_safe') then
     raise exception using errcode='22023', message='Unsupported homepage section type';
   end if;
-  if p_sort_order < 0 or p_sort_order >= 10000 or jsonb_typeof(coalesce(p_config,'{}'::jsonb)) <> 'object' or not private.visual_config_is_safe(coalesce(p_config,'{}'::jsonb)) then
+  if p_sort_order < 0 or p_sort_order >= 10000 or octet_length(coalesce(p_config,'{}'::jsonb)::text) > 200000 or jsonb_typeof(coalesce(p_config,'{}'::jsonb)) <> 'object' or not private.visual_config_is_safe(coalesce(p_config,'{}'::jsonb)) then
     raise exception using errcode='22023', message='Invalid or unsafe homepage configuration';
   end if;
   if v_id is null then
@@ -282,7 +282,7 @@ returns uuid language plpgsql security definer set search_path = '' as $$
 declare v_id uuid := p_campaign_id; v_version integer; v_start timestamptz; v_end timestamptz; v_snapshot jsonb;
 begin
   if not private.has_permission('campaigns.manage') then raise exception using errcode='42501', message='Campaign permission required'; end if;
-  if jsonb_typeof(p_payload) <> 'object' or not private.visual_config_is_safe(p_payload) then raise exception using errcode='22023', message='Invalid or unsafe campaign configuration'; end if;
+  if jsonb_typeof(p_payload) <> 'object' or octet_length(p_payload::text) > 250000 or not private.visual_config_is_safe(p_payload) then raise exception using errcode='22023', message='Invalid or unsafe campaign configuration'; end if;
   v_start := (p_payload->>'startAt')::timestamptz; v_end := (p_payload->>'endAt')::timestamptz;
   if v_start is null or v_end is null or v_end <= v_start then raise exception using errcode='22023', message='Campaign dates are invalid'; end if;
   if v_id is null then
