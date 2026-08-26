@@ -88,6 +88,21 @@ export interface LessonBlock {
   archivedAt?: string;
 }
 
+export interface AIGeneratedBlockDraft {
+  type: BlockType;
+  titleAr: string;
+  titleEn?: string;
+  payload: Record<string, unknown>;
+}
+
+export interface AIGeneratedLessonDraft {
+  titleAr: string;
+  titleEn: string;
+  summaryAr: string;
+  durationMinutes: number;
+  blocks: AIGeneratedBlockDraft[];
+}
+
 export type PermissionCode =
   | 'content.manage'
   | 'course.publish'
@@ -100,7 +115,10 @@ export type PermissionCode =
   | 'ai.generate'
   | 'certificates.manage'
   | 'audit.view'
-  | 'roles.manage';
+  | 'roles.manage'
+  | 'pages.manage'
+  | 'features.manage'
+  | 'diagnostics.view';
 
 export interface PermissionDefinition {
   code: PermissionCode;
@@ -115,6 +133,9 @@ export interface StaffPermissionAssignment {
   email: string;
   roles: UserRole[];
   permissions: Partial<Record<PermissionCode, boolean>>;
+  isActive?: boolean;
+  isSuspended?: boolean;
+  lastActiveAt?: string;
 }
 
 export interface BankQuestionOption {
@@ -384,6 +405,13 @@ export interface PlatformSettings {
   heroSubheadlineAr: string;
   heroImageUrl: string;
   homepageImages: string[];
+  homepageBadgeAr: string;
+  heroPrimaryCtaLabelAr: string;
+  heroPrimaryCtaTarget: string;
+  heroSecondaryCtaLabelAr: string;
+  heroSecondaryCtaTarget: string;
+  homepageStats: Array<{ value: string; labelAr: string; color?: string }>;
+  homepageMarketingSections: Array<{ titleAr: string; descriptionAr: string; icon?: string }>;
   contactEmail: string;
   registrationStatus: 'open' | 'waitlist' | 'closed';
   isRegistrationOpen: boolean;
@@ -396,6 +424,7 @@ export interface PlatformSettings {
   xTwitterUrl: string;
   instagramUrl: string;
   footerContentAr: string;
+  footerHighlightAr: string;
   seoTitle: string;
   seoDescription: string;
   openGraphImageUrl: string;

@@ -1,6 +1,7 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react';
-import { ContentStatus, Course, Lesson, LevelCode } from '../types';
+import { AIGeneratedBlockDraft, ContentStatus, Course, Lesson, LevelCode } from '../types';
 import { ownerCoursesService } from '../services/ownerCoursesService';
+import { ownerCmsService } from '../services/ownerCmsService';
 
 const initialForm = { titleAr: '', titleEn: '', level: 'A1' as LevelCode, unitNumber: 1, durationMinutes: 15, summaryAr: '', arabicExplanation: '', status: 'draft' as ContentStatus };
 
@@ -11,6 +12,7 @@ export function useOwnerCoursesCMS() {
   const [statusFilter, setStatusFilter] = useState<ContentStatus | 'all'>('all');
   const [isCreatingLesson, setIsCreatingLesson] = useState(false);
   const [newLessonData, setNewLessonData] = useState(initialForm);
+  const [newLessonBlocks, setNewLessonBlocks] = useState<AIGeneratedBlockDraft[]>([]);
   const [previewLesson, setPreviewLesson] = useState<Lesson | null>(null);
 
   useEffect(() => { void ownerCoursesService.load().then((data) => { setCourses(data.courses); setSelectedCourse(data.selectedCourse); setLessons(data.lessons); }); }, []);
@@ -28,11 +30,12 @@ export function useOwnerCoursesCMS() {
     const created = await ownerCoursesService.createLesson({ courseId: selectedCourse.id, ...newLessonData,
       unitNumber: Number(newLessonData.unitNumber), durationMinutes: Number(newLessonData.durationMinutes),
       vocabList: [], grammarRules: [], listeningPhrases: [], quizQuestions: [] });
+    for (const block of newLessonBlocks) await ownerCmsService.createBlock({ lessonId: created.id, ...block });
     setLessons((current) => [created, ...current]); setIsCreatingLesson(false);
-    setNewLessonData({ ...initialForm, unitNumber: lessons.length + 1 });
+    setNewLessonData({ ...initialForm, unitNumber: lessons.length + 1 }); setNewLessonBlocks([]);
   };
   const filteredLessons = useMemo(() => statusFilter === 'all' ? lessons : lessons.filter((lesson) => lesson.status === statusFilter), [lessons, statusFilter]);
   return { courses, lessons, selectedCourse, statusFilter, setStatusFilter, isCreatingLesson, setIsCreatingLesson,
-    newLessonData, setNewLessonData, previewLesson, setPreviewLesson, filteredLessons,
+    newLessonData, setNewLessonData, newLessonBlocks, setNewLessonBlocks, previewLesson, setPreviewLesson, filteredLessons,
     handleSelectCourse, handleToggleLessonStatus, handleSetLessonStatus, handleCreateLesson };
 }

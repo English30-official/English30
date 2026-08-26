@@ -1,5 +1,6 @@
 import { CertificateRecord, CertificateSettings, CertificateVerification } from '../types';
 import { getSupabaseClient } from '../lib/supabase';
+import { mediaService } from './mediaService';
 
 const mapSettings = (row: any): CertificateSettings => ({
   courseId: row.course_id, enabled: row.enabled, certificateTitle: row.certificate_title,
@@ -28,15 +29,15 @@ const hydrateCertificateAssets = async (records: CertificateRecord[]): Promise<C
   if (error) throw error;
   const urls = new Map<string, string>();
   await Promise.all((data ?? []).map(async (asset) => {
-    const { data: signed, error: signError } = await client.storage.from(asset.bucket_id).createSignedUrl(asset.storage_path, 3600);
-    if (!signError && signed?.signedUrl) urls.set(asset.id, signed.signedUrl);
+    try { urls.set(asset.id, await mediaService.resolveAssetUrl({ bucketId: asset.bucket_id, storagePath: asset.storage_path })); }
+    catch { /* Preserve the certificate even if an optional visual asset is unavailable. */ }
   }));
   return records.map((record) => ({
     ...record,
     template: {
       ...record.template,
-      logoUrl: typeof record.template.logoAssetId === 'string' ? urls.get(record.template.logoAssetId) : undefined,
-      signatureUrl: typeof record.template.signatureAssetId === 'string' ? urls.get(record.template.signatureAssetId) : undefined,
+      logoUrl: typeof record.template.logoAssetId === 'string' ? (urls.get(record.template.logoAssetId) ?? record.template.logoUrl) : record.template.logoUrl,
+      signatureUrl: typeof record.template.signatureAssetId === 'string' ? (urls.get(record.template.signatureAssetId) ?? record.template.signatureUrl) : record.template.signatureUrl,
     },
   }));
 };

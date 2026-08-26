@@ -1,20 +1,39 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   BookOpen, Plus, CheckCircle, Clock, Archive, Edit3, Trash2, Eye, Layers,
   Sparkles, Video, FileText, HelpCircle, Volume2, Check, ChevronLeft,
 } from 'lucide-react';
-import { ContentStatus } from '../../types';
+import { AIGeneratedLessonDraft, ContentStatus } from '../../types';
 import { useOwnerCoursesCMS } from '../../hooks/useOwnerCoursesCMS';
 import { OwnerCourseManager } from './OwnerCourseManager';
 import { LessonBlocksRenderer } from '../LessonBlocksRenderer';
+import { aiContentDraftsService, ownerAIService } from '../../services';
 
 export const OwnerCoursesCMS: React.FC = () => {
   const {
     courses, lessons, selectedCourse, statusFilter, setStatusFilter,
-    isCreatingLesson, setIsCreatingLesson, newLessonData, setNewLessonData,
+    isCreatingLesson, setIsCreatingLesson, newLessonData, setNewLessonData, newLessonBlocks, setNewLessonBlocks,
     previewLesson, setPreviewLesson, filteredLessons, handleSelectCourse,
-    handleToggleLessonStatus, handleSetLessonStatus, handleCreateLesson,
+    handleSetLessonStatus, handleCreateLesson,
   } = useOwnerCoursesCMS();
+  const [aiPrompt, setAiPrompt] = useState('');
+  const [aiBusy, setAiBusy] = useState(false);
+  const [aiError, setAiError] = useState('');
+  const [aiProposal, setAiProposal] = useState<AIGeneratedLessonDraft | null>(null);
+  const generateLesson = async () => {
+    setAiBusy(true); setAiError('');
+    try {
+      const generated = await ownerAIService.generateContentDraft({ mode: 'lesson', prompt: aiPrompt, level: selectedCourse?.level || 'A1' }) as AIGeneratedLessonDraft;
+      await aiContentDraftsService.create({ targetType: 'lesson', titleAr: generated.titleAr, prompt: aiPrompt, level: selectedCourse?.level || 'A1', content: generated });
+      setAiProposal(generated);
+    } catch (reason) { setAiError(reason instanceof Error ? reason.message : 'تعذر إنشاء المسودة.'); }
+    finally { setAiBusy(false); }
+  };
+  const approveProposal = () => {
+    if (!aiProposal) return;
+    setNewLessonData({ ...newLessonData, titleAr: aiProposal.titleAr, titleEn: aiProposal.titleEn, summaryAr: aiProposal.summaryAr, durationMinutes: aiProposal.durationMinutes, level: selectedCourse?.level || 'A1', status: 'draft' });
+    setNewLessonBlocks(aiProposal.blocks); setAiProposal(null);
+  };
 
   return (
     <div className="space-y-8 animate-fadeIn" dir="rtl">
@@ -24,7 +43,7 @@ export const OwnerCoursesCMS: React.FC = () => {
         <div>
           <h2 className="text-2xl font-black text-slate-900">إدارة المناهج والدروس (Course & Lesson CMS)</h2>
           <p className="text-xs sm:text-sm text-slate-500 mt-1">
-            إدارة كاملة بنظام المسودات والنشر (Draft ➔ Review ➔ Published) مع كتل المحتوى التفاعلية.
+            دورة المحتوى المعتمدة: Draft ➔ Preview ➔ Published ➔ Archived، مع كتل محتوى تفاعلية.
           </p>
         </div>
 
@@ -93,7 +112,7 @@ export const OwnerCoursesCMS: React.FC = () => {
           {/* Status Filter Chips */}
           <div className="flex items-center gap-1.5">
             <span className="text-xs text-slate-500 font-bold ml-1">تصفية:</span>
-            {(['all', 'published', 'draft', 'archived'] as const).map((st) => (
+            {(['all', 'draft', 'preview', 'published', 'archived'] as const).map((st) => (
               <button
                 key={st}
                 onClick={() => setStatusFilter(st)}
@@ -106,6 +125,7 @@ export const OwnerCoursesCMS: React.FC = () => {
                 {st === 'all' && 'الكل'}
                 {st === 'published' && '🟢 منشورة (Published)'}
                 {st === 'draft' && '🟡 مسودات (Draft)'}
+                {st === 'preview' && '🔵 معاينة (Preview)'}
                 {st === 'archived' && '⚪ أرشيف'}
               </button>
             ))}
@@ -155,27 +175,16 @@ export const OwnerCoursesCMS: React.FC = () => {
                     <span className="hidden sm:inline">معاينة الكتل</span>
                   </button>
 
-                  {lesson.status !== 'archived' && <button
-                    onClick={() => handleToggleLessonStatus(lesson)}
+                  {lesson.status === 'published' && <button
+                    onClick={() => void handleSetLessonStatus(lesson, 'preview')}
                     className={`px-3 py-2 rounded-xl text-xs font-black flex items-center gap-1.5 transition-all cursor-pointer ${
-                      isPub
-                        ? 'bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200'
-                        : 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs'
+                      'bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200'
                     }`}
                   >
-                    {isPub ? (
-                      <>
-                        <Clock className="w-3.5 h-3.5" />
-                        <span>تحويل لمسودة</span>
-                      </>
-                    ) : (
-                      <>
-                        <Check className="w-3.5 h-3.5" />
-                        <span>نشر الآن</span>
-                      </>
-                    )}
+                    <Clock className="w-3.5 h-3.5" /><span>إلغاء النشر إلى المعاينة</span>
                   </button>}
                   {lesson.status === 'draft' && <button onClick={() => void handleSetLessonStatus(lesson, 'preview')} className="px-3 py-2 rounded-xl text-xs font-black bg-indigo-50 text-indigo-700 border border-indigo-200">وضع المعاينة</button>}
+                  {lesson.status === 'preview' && <button onClick={() => void handleSetLessonStatus(lesson, 'published')} className="px-3 py-2 rounded-xl text-xs font-black bg-emerald-600 text-white"><Check className="inline w-3.5 h-3.5 ml-1"/>نشر للطلاب</button>}
                   {lesson.status !== 'archived' ? <button onClick={() => void handleSetLessonStatus(lesson, 'archived')} className="p-2 rounded-xl bg-slate-100 text-slate-600" title="أرشفة"><Archive className="w-4 h-4"/></button> : <button onClick={() => void handleSetLessonStatus(lesson, 'draft')} className="px-3 py-2 rounded-xl text-xs font-black bg-indigo-50 text-indigo-700">استعادة</button>}
                 </div>
               </div>
@@ -201,6 +210,7 @@ export const OwnerCoursesCMS: React.FC = () => {
             </div>
 
             <form onSubmit={handleCreateLesson} className="space-y-4">
+              <div className="rounded-2xl border border-violet-200 bg-violet-50 p-4 space-y-3"><div className="flex items-center gap-2 text-violet-800 font-black text-sm"><Sparkles className="w-4 h-4"/>✨ إنشاء مسودة بالذكاء الاصطناعي</div><textarea value={aiPrompt} onChange={(event) => setAiPrompt(event.target.value)} rows={3} placeholder="مثال: أنشئ درس A1 بعنوان Daily Routine لمدة 20 دقيقة مع مفردات وقاعدة وأمثلة وتمارين واختبار" className="w-full border rounded-xl p-3 text-sm bg-white"/><button type="button" disabled={aiBusy || aiPrompt.trim().length < 5} onClick={() => void generateLesson()} className="bg-violet-700 text-white px-4 py-2.5 rounded-xl text-xs font-black">{aiBusy ? 'جاري الإنشاء...' : '✨ إنشاء بالذكاء الاصطناعي'}</button>{aiError && <p className="text-xs text-red-700">{aiError}</p>}{newLessonBlocks.length > 0 && <p className="text-xs text-emerald-700 font-bold">تم اعتماد {newLessonBlocks.length} كتل للمسودة. لن تُنشر إلا بأمر نشر منفصل.</p>}</div>
               
               <div>
                 <label className="text-xs font-bold text-slate-700 block mb-1">عنوان الدرس بالعربية *</label>
@@ -292,6 +302,7 @@ export const OwnerCoursesCMS: React.FC = () => {
           </div>
         </div>
       )}
+      {aiProposal && <div className="fixed inset-0 z-[70] bg-slate-950/70 p-4 flex items-center justify-center" dir="rtl"><div className="bg-white rounded-3xl p-6 w-full max-w-3xl max-h-[90vh] overflow-auto space-y-4"><h3 className="text-xl font-black">مراجعة اقتراح AI قبل إضافته</h3><p className="text-sm font-bold">{aiProposal.titleAr} · {aiProposal.titleEn}</p><p className="text-sm text-slate-600">{aiProposal.summaryAr}</p><div className="space-y-2">{aiProposal.blocks.map((block,index)=><div key={index} className="border rounded-xl p-3"><span className="text-[10px] bg-slate-100 px-2 py-1 rounded">{block.type}</span><strong className="block mt-2 text-sm">{block.titleAr}</strong><pre className="text-xs whitespace-pre-wrap mt-1 text-slate-600" dir="ltr">{JSON.stringify(block.payload,null,2)}</pre></div>)}</div><div className="flex justify-end gap-2"><button onClick={()=>setAiProposal(null)} className="px-4 py-2 border rounded-xl font-bold text-sm">رفض</button><button onClick={approveProposal} className="px-4 py-2 bg-indigo-600 text-white rounded-xl font-black text-sm">اعتماد كمسودة قابلة للتحرير</button></div></div></div>}
 
       {/* Modal: Lesson Blocks Preview */}
       {previewLesson && (
