@@ -23,4 +23,5 @@ export type { FeatureFlagRecord } from './ownerCmsService';
 export { permissionsService } from './permissionsService';
 export { certificateService } from './certificateService';
 export { diagnosticsService } from './diagnosticsService';
+export { homepageService, SECTION_LABELS, SECTION_TYPES, CAMPAIGN_PRESETS, CAMPAIGN_LOCATIONS } from './homepageService';
 export { supabase, isSupabaseConfigured, getSupabaseClient } from '../lib/supabase';
