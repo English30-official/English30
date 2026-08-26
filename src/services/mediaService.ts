@@ -17,7 +17,6 @@ const EXTENSION_MIME: Record<string, string> = { png: 'image/png', jpg: 'image/j
 const mapRow = (row: any): MediaAsset => ({ id: row.id, bucketId: row.bucket_id, storagePath: row.storage_path, fileName: row.file_name, mimeType: row.mime_type ?? undefined, sizeBytes: row.size_bytes ?? undefined, altText: row.alt_text ?? undefined, kind: row.kind, provider: row.provider ?? 'supabase_storage', providerAssetId: row.provider_asset_id ?? undefined, metadata: row.metadata ?? {}, createdAt: row.created_at, archivedAt: row.archived_at ?? undefined });
 const kindOf = (mime: string): MediaAsset['kind'] => mime.startsWith('image/') ? 'image' : mime.startsWith('video/') ? 'video' : mime.startsWith('audio/') ? 'audio' : mime === 'application/pdf' ? 'document' : 'other';
 const extensionOf = (name: string) => name.toLowerCase().split('.').pop() ?? '';
-const bytesToHex = (bytes: ArrayBuffer) => Array.from(new Uint8Array(bytes), (value) => value.toString(16).padStart(2, '0')).join('');
 const hasValidImageSignature = (bytes: Uint8Array, extension: string) => {
   if (extension === 'png') return bytes.length >= 8 && [0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a].every((value, index) => bytes[index] === value);
   if (extension === 'jpg' || extension === 'jpeg') return bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
@@ -43,22 +42,36 @@ class MediaService {
   async uploadSiteImage(file: File, options: SiteImageUploadOptions = {}): Promise<MediaAsset> {
     if (!isSupabaseConfigured) throw new Error('Supabase is not configured.');
     if (!file.size || file.size > MAX_SITE_IMAGE_BYTES) throw new Error('حجم الصورة يجب ألا يتجاوز 5 ميجابايت.');
-    const extension = extensionOf(file.name); const expectedMime = EXTENSION_MIME[extension]; const normalizedMime = file.type || expectedMime;
+    const extension = extensionOf(file.name);
+    const expectedMime = EXTENSION_MIME[extension];
+    const normalizedMime = file.type || expectedMime;
     const allowedMimes = options.allowFavicon ? new Set([...SAFE_IMAGE_MIMES, ...FAVICON_MIMES]) : SAFE_IMAGE_MIMES;
     if (!expectedMime || !allowedMimes.has(normalizedMime) || (file.type && expectedMime !== file.type && !(extension === 'ico' && FAVICON_MIMES.has(file.type)))) throw new Error(options.allowFavicon ? 'الأنواع المسموحة: PNG وJPEG وWebP وICO.' : 'الأنواع المسموحة: PNG وJPEG وWebP فقط.');
     if (extension === 'svg' || normalizedMime === 'image/svg+xml') throw new Error('رفع SVG غير متاح لعدم وجود تعقيم آمن له.');
+
+    // Fast UX validation only. The Edge Function repeats signature validation
+    // authoritatively before Storage or media_assets are written.
     const head = new Uint8Array(await file.slice(0, 16).arrayBuffer());
     if (!hasValidImageSignature(head, extension)) throw new Error('محتوى الملف لا يطابق امتداد الصورة المعلن.');
-    const client = getSupabaseClient(); const user = (await client.auth.getUser()).data.user; if (!user) throw new Error('يجب تسجيل الدخول.');
-    const sha256 = bytesToHex(await crypto.subtle.digest('SHA-256', await file.arrayBuffer()));
-    const { data: duplicate, error: duplicateError } = await client.from('media_assets').select('*').eq('bucket_id', PUBLIC_SITE_ASSETS_BUCKET).eq('kind', 'image').is('archived_at', null).contains('metadata', { sha256 }).limit(1).maybeSingle();
-    if (duplicateError) throw duplicateError; if (duplicate) return mapRow(duplicate);
-    const folder = options.folder ?? 'library'; const pathExtension = extension === 'jpeg' ? 'jpg' : extension; const path = `${folder}/${crypto.randomUUID()}.${pathExtension}`;
-    const contentType = extension === 'ico' ? 'image/x-icon' : expectedMime; const payload = file.type === contentType ? file : new Blob([file], { type: contentType }); const dimensions = await readDimensions(payload);
-    const { error: uploadError } = await client.storage.from(PUBLIC_SITE_ASSETS_BUCKET).upload(path, payload, { contentType, upsert: false, cacheControl: '31536000' }); if (uploadError) throw uploadError;
-    const { data, error: insertError } = await client.from('media_assets').insert({ uploaded_by: user.id, bucket_id: PUBLIC_SITE_ASSETS_BUCKET, storage_path: path, file_name: file.name, mime_type: contentType, size_bytes: file.size, alt_text: options.altText?.trim() || null, kind: 'image', provider: 'supabase_storage', metadata: { ...dimensions, sha256, extension: pathExtension } }).select('*').single();
-    if (insertError) { await client.storage.from(PUBLIC_SITE_ASSETS_BUCKET).remove([path]); throw insertError; }
-    return mapRow(data);
+
+    const contentType = extension === 'ico' ? 'image/x-icon' : expectedMime;
+    const payload = file.type === contentType ? file : new Blob([file], { type: contentType });
+    const dimensions = await readDimensions(payload);
+    const { data, error } = await getSupabaseClient().functions.invoke('upload-public-site-asset', {
+      body: payload,
+      headers: {
+        'Content-Type': contentType,
+        'x-file-name': encodeURIComponent(file.name),
+        'x-folder': options.folder ?? 'library',
+        'x-alt-text': encodeURIComponent(options.altText?.trim() || ''),
+        'x-allow-favicon': options.allowFavicon ? '1' : '0',
+        ...(dimensions.width ? { 'x-image-width': String(dimensions.width) } : {}),
+        ...(dimensions.height ? { 'x-image-height': String(dimensions.height) } : {}),
+      },
+    });
+    if (error) throw new Error(error.message || 'تعذر رفع الصورة عبر مسار التحقق الآمن.');
+    if (!data?.ok || !data.asset) throw new Error(data?.error || 'تعذر تسجيل الصورة بعد التحقق منها.');
+    return mapRow(data.asset);
   }
 
   async upload(file: File, bucketId = PRIVATE_LESSON_MEDIA_BUCKET, folder = 'library', altText = ''): Promise<MediaAsset> {
