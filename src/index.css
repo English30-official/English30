@@ -12,6 +12,33 @@
   display: inline-block;
 }
 
+.homepage-section { contain: layout paint; }
+.owner-homepage-editable { outline: 2px dashed transparent; outline-offset: 5px; }
+.owner-homepage-editable:hover, .owner-homepage-editable:focus-within { outline-color: #fbbf24; }
+.owner-section-edit { position: absolute; top: 10px; left: 10px; z-index: 30; border: 0; border-radius: 10px; padding: 7px 10px; background: #fbbf24; color: #0f172a; font-size: 11px; font-weight: 900; opacity: 0; transition: opacity .15s ease; }
+.owner-homepage-editable:hover .owner-section-edit, .owner-homepage-editable:focus-within .owner-section-edit { opacity: 1; }
+.countdown-unit { min-width: 54px; padding: 7px 9px; border-radius: 12px; background: rgba(255,255,255,.12); text-align: center; display: inline-flex; flex-direction: column; }
+.countdown-unit strong { font-size: 1.1rem; line-height: 1.3; }
+.countdown-unit small { font-size: .65rem; color: rgba(255,255,255,.75); }
+.visual-anim { animation-duration: .65s; animation-fill-mode: both; animation-timing-function: cubic-bezier(.2,.8,.2,1); }
+.visual-anim-fade_in { animation-name: visualFadeIn; }
+.visual-anim-fade_up { animation-name: visualFadeUp; }
+.visual-anim-fade_down { animation-name: visualFadeDown; }
+.visual-anim-slide_left { animation-name: visualSlideLeft; }
+.visual-anim-slide_right { animation-name: visualSlideRight; }
+.visual-anim-zoom_subtle { animation-name: visualZoom; }
+.visual-anim-gentle_float { animation: visualFloat 4s ease-in-out infinite; }
+@keyframes visualFadeIn { from { opacity: 0 } to { opacity: 1 } }
+@keyframes visualFadeUp { from { opacity: 0; transform: translateY(14px) } to { opacity: 1; transform: translateY(0) } }
+@keyframes visualFadeDown { from { opacity: 0; transform: translateY(-14px) } to { opacity: 1; transform: translateY(0) } }
+@keyframes visualSlideLeft { from { opacity: 0; transform: translateX(18px) } to { opacity: 1; transform: translateX(0) } }
+@keyframes visualSlideRight { from { opacity: 0; transform: translateX(-18px) } to { opacity: 1; transform: translateX(0) } }
+@keyframes visualZoom { from { opacity: 0; transform: scale(.98) } to { opacity: 1; transform: scale(1) } }
+@keyframes visualFloat { 0%,100% { transform: translateY(0) } 50% { transform: translateY(-4px) } }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .001ms !important; animation-iteration-count: 1 !important; scroll-behavior: auto !important; transition-duration: .001ms !important; }
+}
+
 /* Custom scrollbar styling */
 ::-webkit-scrollbar {
   width: 8px;

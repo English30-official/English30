@@ -118,7 +118,74 @@ export type PermissionCode =
   | 'roles.manage'
   | 'pages.manage'
   | 'features.manage'
-  | 'diagnostics.view';
+  | 'diagnostics.view'
+  | 'homepage.manage'
+  | 'campaigns.manage'
+  | 'design.manage';
+
+export type HomepageSectionType =
+  | 'hero' | 'announcement_bar' | 'promotional_banner' | 'image_carousel'
+  | 'featured_course' | 'course_grid' | 'course_carousel' | 'benefits'
+  | 'statistics' | 'testimonials' | 'video' | 'image_text_split'
+  | 'text_content' | 'cta' | 'faq' | 'logos' | 'trust_badges' | 'countdown'
+  | 'pricing_highlight' | 'placement_test' | 'certificate_promotion' | 'app_promo'
+  | 'blog_teaser' | 'custom_safe';
+
+export type VisualAnimationPreset =
+  | 'none' | 'fade_in' | 'fade_up' | 'fade_down' | 'slide_left' | 'slide_right'
+  | 'zoom_subtle' | 'staggered_cards' | 'soft_parallax' | 'auto_carousel'
+  | 'marquee' | 'count_up' | 'gentle_float';
+
+export interface HomepageSection {
+  id: string;
+  sectionType: HomepageSectionType;
+  sortOrder: number;
+  enabled: boolean;
+  status: ContentStatus;
+  config: Record<string, unknown>;
+  versionId?: string;
+  updatedAt?: string;
+  archivedAt?: string;
+}
+
+export interface HomepageSectionVersion {
+  id: string;
+  sectionId: string;
+  versionNumber: number;
+  status: ContentStatus;
+  config: Record<string, unknown>;
+  createdAt: string;
+  createdBy?: string;
+}
+
+export type CampaignPlacement =
+  | 'announcement_bar' | 'homepage_hero' | 'homepage_banner' | 'homepage_midpage'
+  | 'promotional_carousel' | 'pricing' | 'course' | 'auth' | 'popup' | 'sticky_mobile';
+
+export type CampaignPreset =
+  | 'elegant_academic' | 'bold_promotion' | 'minimal' | 'premium' | 'saudi_national_day'
+  | 'ramadan' | 'black_friday' | 'course_launch' | 'clean_modern' | 'youthful_learning'
+  | 'dark_premium' | 'light_minimal';
+
+export interface Campaign {
+  id: string;
+  internalName: string;
+  publicTitle: string;
+  subtitle: string;
+  description: string;
+  status: ContentStatus;
+  isActive: boolean;
+  priority: number;
+  startAt: string;
+  endAt: string;
+  timezone: string;
+  preset: CampaignPreset;
+  config: Record<string, unknown>;
+  locations: CampaignPlacement[];
+  publishedAt?: string;
+  archivedAt?: string;
+  updatedAt?: string;
+}
 
 export interface PermissionDefinition {
   code: PermissionCode;
@@ -396,6 +463,21 @@ export interface PricingFaqItem {
   orderIndex: number;
 }
 
+export interface VisualThemeSettings {
+  primaryColor: string;
+  secondaryColor: string;
+  accentColor: string;
+  backgroundColor: string;
+  surfaceStyle: 'plain' | 'soft' | 'glass';
+  headingStyle: 'modern' | 'classic' | 'compact';
+  buttonStyle: 'rounded' | 'soft' | 'pill';
+  radiusPreset: 'small' | 'medium' | 'large';
+  shadowPreset: 'none' | 'soft' | 'elevated';
+  spacingPreset: 'compact' | 'comfortable' | 'airy';
+  maxWidthPreset: 'narrow' | 'standard' | 'wide';
+  fontFamily: 'cairo' | 'system';
+}
+
 export interface PlatformSettings {
   siteName: string;
   logoUrl: string;
@@ -447,6 +529,7 @@ export interface PlatformSettings {
   lifetimePlanPrice: number;
   pricingFaqs: PricingFaqItem[];
   updatedAt: string;
+  theme: VisualThemeSettings;
 }
 
 export interface AuditLogItem {
@@ -584,7 +667,9 @@ export type OwnerTab =
   | 'versions'
   | 'certificates'
   | 'diagnostics'
-  | 'import-export';
+  | 'import-export'
+  | 'homepage'
+  | 'campaigns';
 
 export type AppViewMode = 'student' | 'owner';
 export type AppMode = 'student' | 'owner';

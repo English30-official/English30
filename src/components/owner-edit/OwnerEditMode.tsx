@@ -2,10 +2,11 @@ import React, { createContext, useContext, useEffect, useMemo, useState } from '
 import { CheckCircle2, Eye, Loader2, Pencil, Save, X } from 'lucide-react';
 import { useAuth } from '../../auth/AuthContext';
 import { settingsService } from '../../services/settingsService';
-import type { PlatformSettings } from '../../types';
+import type { HomepageSection, PlatformSettings } from '../../types';
 
 const MediaImagePicker = React.lazy(() => import('../owner/MediaImagePicker').then((module) => ({ default: module.MediaImagePicker })));
 const MediaImageGalleryPicker = React.lazy(() => import('../owner/MediaImagePicker').then((module) => ({ default: module.MediaImageGalleryPicker })));
+const HomepageSectionEditor = React.lazy(() => import('../owner/HomepageSectionEditor').then((module) => ({ default: module.HomepageSectionEditor })));
 
 type EditableKey = keyof PlatformSettings;
 type FieldKind = 'text' | 'textarea' | 'url' | 'json' | 'image' | 'image-list';
@@ -16,9 +17,10 @@ interface OwnerEditContextValue {
   enabled: boolean;
   isOwner: boolean;
   openEditor(request: OwnerEditRequest): void;
+  openSectionEditor(section: HomepageSection): void;
 }
 
-const OwnerEditContext = createContext<OwnerEditContextValue>({ enabled: false, isOwner: false, openEditor: () => undefined });
+const OwnerEditContext = createContext<OwnerEditContextValue>({ enabled: false, isOwner: false, openEditor: () => undefined, openSectionEditor: () => undefined });
 
 const serialize = (value: unknown, kind?: FieldKind) => kind === 'json' || kind === 'image-list' ? JSON.stringify(value ?? [], null, 2) : String(value ?? '');
 const publicTargets = new Set(['home','levels','courses','lesson','placement-test','dashboard','vocab','quizzes','ai-tutor','certificates','pricing']);
@@ -40,9 +42,10 @@ export const OwnerEditModeProvider: React.FC<React.PropsWithChildren> = ({ child
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+  const [sectionToEdit, setSectionToEdit] = useState<HomepageSection | null>(null);
 
   useEffect(() => settingsService.subscribe(setSettings), []);
-  useEffect(() => { if (!isOwner || isSuspended) { setEnabled(false); setRequest(null); } }, [isOwner, isSuspended]);
+  useEffect(() => { if (!isOwner || isSuspended) { setEnabled(false); setRequest(null); setSectionToEdit(null); } }, [isOwner, isSuspended]);
 
   const openEditor = (next: OwnerEditRequest) => {
     if (!isOwner || isSuspended) return;
@@ -72,10 +75,12 @@ export const OwnerEditModeProvider: React.FC<React.PropsWithChildren> = ({ child
     finally { setBusy(false); }
   };
 
-  const value = useMemo(() => ({ enabled: enabled && isOwner && !isSuspended, isOwner: isOwner && !isSuspended, openEditor }), [enabled, isOwner, isSuspended, settings]);
+  const openSectionEditor = (section: HomepageSection) => { if (isOwner && !isSuspended && enabled) setSectionToEdit(section); };
+  const value = useMemo(() => ({ enabled: enabled && isOwner && !isSuspended, isOwner: isOwner && !isSuspended, openEditor, openSectionEditor }), [enabled, isOwner, isSuspended, settings]);
 
   return <OwnerEditContext.Provider value={value}>
     {children}
+    {sectionToEdit && <React.Suspense fallback={null}><HomepageSectionEditor section={sectionToEdit} onClose={() => setSectionToEdit(null)} onSaved={() => setSectionToEdit(null)} /></React.Suspense>}
     {isOwner && !isSuspended && <div className="fixed bottom-5 left-5 z-[80] flex items-center gap-2" dir="rtl">
       <button onClick={() => setEnabled((current) => !current)} className={`shadow-xl border px-4 py-3 rounded-2xl text-sm font-black flex items-center gap-2 ${enabled ? 'bg-amber-400 border-amber-500 text-slate-950' : 'bg-slate-950 border-slate-700 text-white'}`}>
         <Pencil className="w-4 h-4" />{enabled ? 'إنهاء وضع تحرير المالك' : 'وضع تحرير المالك'}

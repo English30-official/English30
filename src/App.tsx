@@ -74,6 +74,7 @@ export default function App() {
   const handlePlacementComplete = (calcLevel: LevelCode) => setStats((prev) => ({ ...prev, level: calcLevel }));
   const handleSelectCourse = (course: Course) => { if (course.isLocked) return; setSelectedCourse(course); setActiveTab('lesson'); };
   const handleStartLesson = () => selectedCourse ? setActiveTab('lesson') : setActiveTab('courses');
+  const themeStyle = { '--brand-primary': settings.theme?.primaryColor || '#4f46e5', '--brand-secondary': settings.theme?.secondaryColor || '#312e81', '--brand-accent': settings.theme?.accentColor || '#f59e0b', '--brand-background': settings.theme?.backgroundColor || '#f8fafc' } as React.CSSProperties;
 
   const needsAuth = (!isConfigured || !session) && ['dashboard', 'lesson', 'quizzes', 'vocab', 'ai-tutor', 'placement-test', 'certificates'].includes(activeTab);
   const isProtectedTab = ['dashboard', 'lesson', 'quizzes', 'vocab', 'ai-tutor', 'placement-test', 'certificates'].includes(activeTab);
@@ -89,7 +90,7 @@ export default function App() {
   if (settings.maintenanceMode?.enabled && !isStaff) return <div className="min-h-screen bg-slate-950 text-white flex items-center justify-center p-6" dir="rtl"><div className="max-w-lg text-center"><div className="text-5xl mb-5">🛠️</div><h1 className="text-3xl font-black">{settings.siteName} تحت الصيانة</h1><p className="text-slate-300 mt-4 leading-8">{settings.maintenanceMode.messageAr}</p></div></div>;
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900 font-sans flex flex-col justify-between selection:bg-indigo-500 selection:text-white" dir="rtl">
+    <div style={themeStyle} className="min-h-screen bg-[var(--brand-background)] text-slate-900 font-sans flex flex-col justify-between selection:bg-indigo-500 selection:text-white" dir="rtl">
       <Navbar activeTab={activeTab} setActiveTab={setActiveTab} stats={stats} onAuth={() => setShowAuth(true)} onSwitchToOwnerView={!authLoading && isStaff ? () => setAppMode('owner') : undefined} />
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-4">
         {!showAuth && !isPasswordRecovery && <FirstOwnerActivation onClaimed={() => setAppMode('owner')} />}

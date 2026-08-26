@@ -35,6 +35,7 @@ export const DEFAULT_PLATFORM_SETTINGS: PlatformSettings = {
   pricingCurrency: 'ر.س', vatPercentage: 15, isVatInclusive: true, refundGuaranteeDays: 14,
   refundGuaranteeTitleAr: 'ضمان استرداد الأموال', refundGuaranteeDescAr: '', monthlyPlanPrice: 99, yearlyPlanPrice: 69, lifetimePlanPrice: 599,
   pricingFaqs: [], updatedAt: new Date(0).toISOString(),
+  theme: { primaryColor: '#4f46e5', secondaryColor: '#312e81', accentColor: '#f59e0b', backgroundColor: '#f8fafc', surfaceStyle: 'plain', headingStyle: 'modern', buttonStyle: 'rounded', radiusPreset: 'large', shadowPreset: 'soft', spacingPreset: 'comfortable', maxWidthPreset: 'standard', fontFamily: 'cairo' },
 };
 
 type SettingsListener = (settings: PlatformSettings) => void;
