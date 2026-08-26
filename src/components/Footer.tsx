@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { ActiveTab, PlatformSettings } from '../types';
-import { Sparkles, Shield, Heart, Send, Phone, Youtube, Twitter } from 'lucide-react';
+import { Sparkles, Shield, Heart, Send, Phone, Youtube, Twitter, Instagram, Mail } from 'lucide-react';
 import { settingsService } from '../services';
 
 interface FooterProps {
@@ -31,9 +31,7 @@ export const Footer: React.FC<FooterProps> = ({ setActiveTab }) => {
           {/* Brand & Mission */}
           <div className="space-y-4 md:col-span-1">
             <div className="flex items-center gap-3">
-              <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-indigo-500 to-violet-500 flex items-center justify-center text-white font-black text-lg">
-                30
-              </div>
+              {settings.logoUrl ? <img src={settings.logoUrl} alt={settings.siteName} className="w-9 h-9 rounded-xl object-contain"/> : <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-indigo-500 to-violet-500 flex items-center justify-center text-white font-black text-lg">30</div>}
               <span className="text-2xl font-black text-white font-english tracking-tight">
                 {settings.siteName || 'English30'}
               </span>
@@ -70,6 +68,17 @@ export const Footer: React.FC<FooterProps> = ({ setActiveTab }) => {
                   <Send className="w-4 h-4" />
                 </a>
               )}
+              {settings.telegramBotUsername && (
+                <a
+                  href={`https://t.me/${settings.telegramBotUsername.replace(/^@/, '')}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="w-8 h-8 rounded-lg bg-slate-800 hover:bg-sky-600 text-slate-300 hover:text-white flex items-center justify-center transition-colors"
+                  title="بوت التيليجرام"
+                >
+                  <Send className="w-4 h-4" />
+                </a>
+              )}
               {settings.youtubeUrl && (
                 <a
                   href={settings.youtubeUrl}
@@ -92,6 +101,8 @@ export const Footer: React.FC<FooterProps> = ({ setActiveTab }) => {
                   <Twitter className="w-4 h-4" />
                 </a>
               )}
+              {settings.instagramUrl && <a href={settings.instagramUrl} target="_blank" rel="noreferrer" className="w-8 h-8 rounded-lg bg-slate-800 hover:bg-pink-600 text-slate-300 hover:text-white flex items-center justify-center transition-colors" title="Instagram"><Instagram className="w-4 h-4"/></a>}
+              {settings.contactEmail && <a href={`mailto:${settings.contactEmail}`} className="w-8 h-8 rounded-lg bg-slate-800 hover:bg-indigo-600 text-slate-300 hover:text-white flex items-center justify-center transition-colors" title={settings.contactEmail}><Mail className="w-4 h-4"/></a>}
             </div>
           </div>
 
@@ -99,11 +110,11 @@ export const Footer: React.FC<FooterProps> = ({ setActiveTab }) => {
           <div>
             <h4 className="text-white font-bold text-base mb-4">أقسام المنصة</h4>
             <ul className="space-y-2.5 text-sm">
-              <li>
+              {settings.featureFlags.navigation_levels !== false && <li>
                 <button onClick={() => setActiveTab('levels')} className="hover:text-indigo-400 transition-colors">
                   مستويات اللغة (A1 - C2)
                 </button>
-              </li>
+              </li>}
               <li>
                 <button onClick={() => setActiveTab('courses')} className="hover:text-indigo-400 transition-colors">
                   دليل الدورات والمهارات
@@ -114,21 +125,21 @@ export const Footer: React.FC<FooterProps> = ({ setActiveTab }) => {
                   اختبار تحديد المستوى المجاني
                 </button>
               </li>
-              <li>
+              {settings.featureFlags.navigation_vocab !== false && <li>
                 <button onClick={() => setActiveTab('vocab')} className="hover:text-indigo-400 transition-colors">
                   بنك المفردات والقاموس
                 </button>
-              </li>
+              </li>}
               <li>
                 <button onClick={() => setActiveTab('pricing')} className="hover:text-indigo-400 transition-colors">
                   الاشتراكات وباقات الأسعار
                 </button>
               </li>
-              <li>
+              {settings.featureFlags.ai_tutor !== false && <li>
                 <button onClick={() => setActiveTab('ai-tutor')} className="hover:text-indigo-400 transition-colors">
                   المعلم الذكي Mr. Alex AI
                 </button>
-              </li>
+              </li>}
             </ul>
           </div>
 
@@ -160,9 +171,7 @@ export const Footer: React.FC<FooterProps> = ({ setActiveTab }) => {
           {/* Platform Trust & Info */}
           <div>
             <h4 className="text-white font-bold text-base mb-4">تجربة النموذج التفاعلي</h4>
-            <p className="text-xs text-slate-400 leading-relaxed mb-3">
-              منصة {settings.siteName || 'English30'} التعليمية المتقدمة لتمكين الطلاب والمهنيين من إتقان الإنجليزية باحترافية.
-            </p>
+            <p className="text-xs text-slate-400 leading-relaxed mb-3">{settings.footerContentAr || `منصة ${settings.siteName || 'English30'} التعليمية المتقدمة لتمكين الطلاب والمهنيين من إتقان الإنجليزية باحترافية.`}</p>
             <div className="flex items-center gap-2 text-xs text-slate-400 bg-slate-800/80 p-3 rounded-xl border border-slate-700">
               <Shield className="w-5 h-5 text-indigo-400 shrink-0" />
               <span>مصمم بجودة منتج تجاري حقيقي جاهز للناطقين بالعربية.</span>
@@ -174,7 +183,10 @@ export const Footer: React.FC<FooterProps> = ({ setActiveTab }) => {
         {/* Bottom copyright */}
         <div className="pt-6 flex flex-col sm:flex-row items-center justify-between text-xs text-slate-500 gap-4">
           <p>© {new Date().getFullYear()} {settings.siteName || 'English30'} - جميع الحقوق محفوظة.</p>
-          <div className="flex items-center gap-1.5 text-slate-400">
+          <div className="flex flex-wrap items-center gap-3 text-slate-400">
+            <a href="/pages/terms" className="hover:text-white">شروط الاستخدام</a>
+            <a href="/pages/privacy" className="hover:text-white">الخصوصية</a>
+            <a href="/pages/refund" className="hover:text-white">الاسترداد</a>
             <span>صُنع بـ</span>
             <Heart className="w-3.5 h-3.5 text-rose-500 fill-rose-500" />
             <span>لخدمة المتعلم العربي حول العالم</span>

@@ -3,7 +3,7 @@ import { getSupabaseClient, isSupabaseConfigured } from '../lib/supabase';
 
 type QuestionsListener = (questions: BankQuestion[]) => void;
 
-type QuestionRow = { id:string; type:BankQuestion['type']; level:LevelCode; category:string; prompt_en:string; prompt_ar:string|null; correct_option_key:string|null; explanation_ar:string; audio_url:string|null; tags:string[]|null; created_at:string };
+type QuestionRow = { id:string; type:BankQuestion['type']; level:LevelCode; category:string; prompt_en:string; prompt_ar:string|null; correct_option_key:string|null; explanation_ar:string; audio_url:string|null; tags:string[]|null; status:BankQuestion['status']; created_at:string };
 type OptionRow = { question_id:string; option_key:string; text_en:string; text_ar:string|null; sort_order:number };
 
 class QuestionsService {
@@ -21,7 +21,7 @@ class QuestionsService {
     this.questions = rows.map(row => ({
       id:row.id, type:row.type, level:row.level, category:row.category, promptEn:row.prompt_en,
       promptAr:row.prompt_ar ?? undefined, correctOptionKey:row.correct_option_key ?? '', explanationAr:row.explanation_ar,
-      audioUrl:row.audio_url ?? undefined, tags:row.tags ?? [], createdAt:row.created_at,
+      audioUrl:row.audio_url ?? undefined, tags:row.tags ?? [], createdAt:row.created_at, status:row.status??'draft',
       options:(row.question_bank_options ?? []).sort((a,b)=>a.sort_order-b.sort_order).map(o=>({key:o.option_key,textEn:o.text_en,textAr:o.text_ar ?? undefined}))
     }));
     this.notify();
@@ -50,7 +50,8 @@ class QuestionsService {
     await this.getQuestions(); return this.questions.find(q=>q.id===id)??null;
   }
 
-  public async deleteQuestion(id:string):Promise<boolean>{ if(!isSupabaseConfigured) throw new Error('Supabase is required to manage the question bank.'); const {error}=await getSupabaseClient().from('question_bank').delete().eq('id',id); if(error) throw error; await this.getQuestions(); return true; }
+  public async setStatus(id:string,status:NonNullable<BankQuestion['status']>):Promise<void>{const {error}=await getSupabaseClient().from('question_bank').update({status,archived_at:status==='archived'?new Date().toISOString():null}).eq('id',id);if(error)throw error;await this.getQuestions();}
+  public async deleteQuestion(id:string):Promise<boolean>{ if(!isSupabaseConfigured) throw new Error('Supabase is required to manage the question bank.'); await this.setStatus(id,'archived'); return true; }
   public subscribe(listener:QuestionsListener):()=>void{ this.listeners.add(listener); void this.getQuestions().then(listener).catch(console.error); return ()=>this.listeners.delete(listener); }
   private notify(){const snapshot=[...this.questions]; this.listeners.forEach(l=>l(snapshot));}
 }

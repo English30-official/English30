@@ -1,8 +1,21 @@
 export type LevelCode = 'A1' | 'A2' | 'B1' | 'B2' | 'C1' | 'C2';
 export type UserRole = 'student' | 'admin' | 'owner';
-export type ContentStatus = 'draft' | 'published' | 'archived';
+export type ContentStatus = 'draft' | 'preview' | 'published' | 'archived';
 export type BlockType =
+  | 'heading'
+  | 'rich_text'
+  | 'vocabulary'
+  | 'example'
+  | 'grammar'
+  | 'note'
+  | 'flashcard'
+  | 'image'
+  | 'audio'
   | 'video'
+  | 'exercise'
+  | 'quiz_reference'
+  | 'downloadable_resource'
+  // Legacy block identifiers remain readable during content migration.
   | 'vocabulary_set'
   | 'grammar_rule'
   | 'reading_passage'
@@ -50,6 +63,7 @@ export interface Course {
   rating: number;
   studentsCount: number;
   image: string;
+  thumbnailAssetId?: string;
   color: string;
   progress?: number;
   isLocked?: boolean;
@@ -69,6 +83,38 @@ export interface LessonBlock {
   status: ContentStatus;
   isFreePreview?: boolean;
   payload: Record<string, any>;
+  mediaAssetId?: string;
+  quizId?: string;
+  archivedAt?: string;
+}
+
+export type PermissionCode =
+  | 'content.manage'
+  | 'course.publish'
+  | 'quiz.manage'
+  | 'media.manage'
+  | 'students.manage'
+  | 'subscriptions.manage'
+  | 'payments.view'
+  | 'settings.manage'
+  | 'ai.generate'
+  | 'certificates.manage'
+  | 'audit.view'
+  | 'roles.manage';
+
+export interface PermissionDefinition {
+  code: PermissionCode;
+  category: string;
+  nameAr: string;
+  descriptionAr?: string;
+}
+
+export interface StaffPermissionAssignment {
+  userId: string;
+  fullName: string;
+  email: string;
+  roles: UserRole[];
+  permissions: Partial<Record<PermissionCode, boolean>>;
 }
 
 export interface BankQuestionOption {
@@ -90,6 +136,7 @@ export interface BankQuestion {
   audioUrl?: string;
   tags?: string[];
   createdAt?: string;
+  status?: ContentStatus;
 }
 
 export interface VocabItem {
@@ -330,9 +377,14 @@ export interface PricingFaqItem {
 
 export interface PlatformSettings {
   siteName: string;
+  logoUrl: string;
+  faviconUrl: string;
   taglineAr: string;
   heroHeadlineAr: string;
   heroSubheadlineAr: string;
+  heroImageUrl: string;
+  homepageImages: string[];
+  contactEmail: string;
   registrationStatus: 'open' | 'waitlist' | 'closed';
   isRegistrationOpen: boolean;
   freeTrialLessonsCount: number;
@@ -343,6 +395,12 @@ export interface PlatformSettings {
   youtubeUrl: string;
   xTwitterUrl: string;
   instagramUrl: string;
+  footerContentAr: string;
+  seoTitle: string;
+  seoDescription: string;
+  openGraphImageUrl: string;
+  maintenanceMode: { enabled: boolean; messageAr: string };
+  featureFlags: Record<string, boolean>;
   announcementBanner: {
     enabled: boolean;
     textAr: string;
@@ -371,6 +429,85 @@ export interface AuditLogItem {
   entityName: string;
   details: string;
   timestamp: string;
+  entityId?: string;
+}
+
+export interface CmsPage {
+  id: string;
+  slug: string;
+  pageType: 'static' | 'legal';
+  titleAr: string;
+  titleEn?: string;
+  body: Array<Record<string, unknown>>;
+  status: ContentStatus;
+  seoTitle?: string;
+  seoDescription?: string;
+  openGraphAssetId?: string;
+  updatedAt: string;
+}
+
+export interface ContentVersion {
+  id: string;
+  entityType: string;
+  entityId: string;
+  versionNumber: number;
+  snapshot: Record<string, unknown>;
+  changeAction: string;
+  changedBy?: string;
+  changedByName?: string;
+  createdAt: string;
+}
+
+export interface CertificateSettings {
+  courseId: string;
+  enabled: boolean;
+  certificateTitle: string;
+  minimumFinalScore: number;
+  requireAllLessons: boolean;
+  requireFinalQuiz: boolean;
+  templateSettings: Record<string, unknown>;
+  logoAssetId?: string;
+  signatoryName?: string;
+  signatoryTitle?: string;
+  signatureAssetId?: string;
+  wording?: string;
+}
+
+export interface CertificateRecord {
+  id: string;
+  certificateNumber: string;
+  verificationCode: string;
+  userId: string;
+  courseId: string;
+  status: 'active' | 'revoked' | 'superseded';
+  studentName: string;
+  courseTitle: string;
+  courseLevel?: string;
+  certificateTitle: string;
+  wording?: string;
+  template: Record<string, unknown>;
+  completion: Record<string, unknown>;
+  issuedAt: string;
+  revokedAt?: string;
+  revocationReason?: string;
+}
+
+export interface CertificateVerification {
+  valid: boolean;
+  status: 'active' | 'revoked' | 'superseded';
+  certificateNumber: string;
+  studentName: string;
+  courseTitle: string;
+  courseLevel?: string;
+  issuedAt: string;
+  revokedAt?: string;
+}
+
+export interface DiagnosticCheck {
+  key: string;
+  label: string;
+  status: 'healthy' | 'configured' | 'not_configured' | 'degraded';
+  detail: string;
 }
 
 export interface AIGenerationDraft {
@@ -381,6 +518,7 @@ export interface AIGenerationDraft {
   level: LevelCode;
   content: any;
   status: 'draft' | 'applied' | 'discarded';
+  lifecycleStatus: ContentStatus;
   createdAt: string;
 }
 
@@ -395,19 +533,29 @@ export type ActiveTab =
   | 'quizzes'
   | 'ai-tutor'
   | 'content-engine'
+  | 'certificates'
   | 'pricing';
 
 export type OwnerTab =
   | 'overview'
   | 'courses'
   | 'lessons'
+  | 'media'
   | 'questions'
   | 'students'
   | 'subscriptions'
   | 'settings'
   | 'ai-assistant'
-  | 'audit-logs';
+  | 'ai-drafts'
+  | 'audit-logs'
+  | 'lesson-builder'
+  | 'pages'
+  | 'feature-flags'
+  | 'permissions'
+  | 'versions'
+  | 'certificates'
+  | 'diagnostics'
+  | 'import-export';
 
 export type AppViewMode = 'student' | 'owner';
 export type AppMode = 'student' | 'owner';
-

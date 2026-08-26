@@ -5,13 +5,15 @@ import {
 } from 'lucide-react';
 import { ContentStatus } from '../../types';
 import { useOwnerCoursesCMS } from '../../hooks/useOwnerCoursesCMS';
+import { OwnerCourseManager } from './OwnerCourseManager';
+import { LessonBlocksRenderer } from '../LessonBlocksRenderer';
 
 export const OwnerCoursesCMS: React.FC = () => {
   const {
     courses, lessons, selectedCourse, statusFilter, setStatusFilter,
     isCreatingLesson, setIsCreatingLesson, newLessonData, setNewLessonData,
     previewLesson, setPreviewLesson, filteredLessons, handleSelectCourse,
-    handleToggleLessonStatus, handleCreateLesson,
+    handleToggleLessonStatus, handleSetLessonStatus, handleCreateLesson,
   } = useOwnerCoursesCMS();
 
   return (
@@ -37,6 +39,8 @@ export const OwnerCoursesCMS: React.FC = () => {
           <span>إضافة درس جديد</span>
         </button>
       </div>
+
+      <div className="bg-white p-6 rounded-3xl border border-slate-200"><OwnerCourseManager /></div>
 
       {/* Courses Horizontal Selector */}
       <div className="space-y-2">
@@ -132,7 +136,7 @@ export const OwnerCoursesCMS: React.FC = () => {
                             : 'bg-amber-50 text-amber-700 border-amber-200'
                         }`}
                       >
-                        {isPub ? 'منشور للطلاب' : 'مسودة قيد المراجعة'}
+                        {lesson.status === 'published' ? 'منشور للطلاب' : lesson.status === 'preview' ? 'معاينة للطاقم' : lesson.status === 'archived' ? 'مؤرشف' : 'مسودة قيد المراجعة'}
                       </span>
                     </div>
                     <p className="text-xs text-slate-500 font-english">{lesson.titleEn}</p>
@@ -151,7 +155,7 @@ export const OwnerCoursesCMS: React.FC = () => {
                     <span className="hidden sm:inline">معاينة الكتل</span>
                   </button>
 
-                  <button
+                  {lesson.status !== 'archived' && <button
                     onClick={() => handleToggleLessonStatus(lesson)}
                     className={`px-3 py-2 rounded-xl text-xs font-black flex items-center gap-1.5 transition-all cursor-pointer ${
                       isPub
@@ -170,7 +174,9 @@ export const OwnerCoursesCMS: React.FC = () => {
                         <span>نشر الآن</span>
                       </>
                     )}
-                  </button>
+                  </button>}
+                  {lesson.status === 'draft' && <button onClick={() => void handleSetLessonStatus(lesson, 'preview')} className="px-3 py-2 rounded-xl text-xs font-black bg-indigo-50 text-indigo-700 border border-indigo-200">وضع المعاينة</button>}
+                  {lesson.status !== 'archived' ? <button onClick={() => void handleSetLessonStatus(lesson, 'archived')} className="p-2 rounded-xl bg-slate-100 text-slate-600" title="أرشفة"><Archive className="w-4 h-4"/></button> : <button onClick={() => void handleSetLessonStatus(lesson, 'draft')} className="px-3 py-2 rounded-xl text-xs font-black bg-indigo-50 text-indigo-700">استعادة</button>}
                 </div>
               </div>
             );
@@ -260,6 +266,7 @@ export const OwnerCoursesCMS: React.FC = () => {
                   className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold"
                 >
                   <option value="draft">🟡 حفظ كـ مسودة (Draft) للمراجعة</option>
+                  <option value="preview">🔵 معاينة آمنة للطاقم (Preview)</option>
                   <option value="published">🟢 نشر مباشر للطلاب (Published)</option>
                 </select>
               </div>
@@ -311,7 +318,7 @@ export const OwnerCoursesCMS: React.FC = () => {
                 يتكون هذا الدرس من كتل محتوى مرتبة ديناميكياً قابلة لإعادة الترتيب والنشر:
               </p>
 
-              <div className="space-y-2.5">
+              {previewLesson.blocks?.length ? <LessonBlocksRenderer blocks={previewLesson.blocks} includeUnpublished/> : <div className="space-y-2.5">
                 <div className="p-3.5 bg-indigo-50/50 border border-indigo-100 rounded-2xl flex items-center gap-3">
                   <div className="w-8 h-8 rounded-xl bg-indigo-600 text-white flex items-center justify-center text-xs font-bold">
                     <Video className="w-4 h-4" />
@@ -351,7 +358,7 @@ export const OwnerCoursesCMS: React.FC = () => {
                     <p className="text-[11px] text-slate-500">أسئلة الاختيار من متعدد مع التغذية الراجعة الفورية</p>
                   </div>
                 </div>
-              </div>
+              </div>}
             </div>
 
             <div className="pt-4 border-t border-slate-100 text-right">
@@ -370,5 +377,3 @@ export const OwnerCoursesCMS: React.FC = () => {
     </div>
   );
 };
-
-

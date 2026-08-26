@@ -1,13 +1,12 @@
 import { LevelCode } from '../types';
+import { authenticatedJsonHeaders } from '../lib/api';
 
 class OwnerAIService {
   public async askOwnerAI(prompt: string, taskType: 'lesson' | 'questions' | 'analytics' | 'general' = 'general', level: LevelCode = 'B1'): Promise<string> {
     try {
       const res = await fetch('/api/owner-ai', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: await authenticatedJsonHeaders(),
         body: JSON.stringify({ prompt, taskType, level }),
       });
 

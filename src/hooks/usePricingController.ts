@@ -47,6 +47,10 @@ export function usePricingController({ defaultPlanId, setActiveTab, onStartLesso
     return () => { stopSettings(); stopPlans(); };
   }, [defaultPlanId]);
 
+  useEffect(() => {
+    if (settings.featureFlags.annual_subscription === false) setIsYearly(false);
+  }, [settings.featureFlags.annual_subscription]);
+
   const handleSelectPlan = (plan: PricingPlan) => {
     if (plan.priceMonthly === 0 && plan.priceYearly === 0) { setActiveTab?.('lesson'); if (!setActiveTab) onStartLesson?.(); return; }
     setSelectedPlan(plan); setCouponCode(''); setCouponMessage(null); setAppliedDiscountPct(0); setViewState('checkout');

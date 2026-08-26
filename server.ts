@@ -97,6 +97,20 @@ async function startServer() {
     return next();
   };
 
+  const requireFeature = (flagKey: string): RequestHandler => async (_req, res, next) => {
+    const { data, error } = await res.locals.userClient.from('feature_flags').select('enabled').eq('key', flagKey).maybeSingle();
+    if (error) return res.status(503).json({ error: 'Unable to verify feature availability.' });
+    if (!data?.enabled) return res.status(404).json({ error: 'This feature is currently disabled.' });
+    return next();
+  };
+
+  const requirePermission = (permission: string): RequestHandler => async (_req, res, next) => {
+    const { data, error } = await res.locals.userClient.rpc('check_permission', { p_permission: permission });
+    if (error) return res.status(503).json({ error: 'Unable to verify permission.' });
+    if (data !== true) return res.status(403).json({ error: 'Required permission is missing.' });
+    return next();
+  };
+
   const requireGemini: RequestHandler = (_req, res, next) => {
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey || apiKey === 'MY_GEMINI_API_KEY') {
@@ -118,8 +132,51 @@ async function startServer() {
   app.use('/api', (_req, res, next) => { res.setHeader('Cache-Control', 'no-store'); next(); });
   app.use(express.json({ limit: '100kb' }));
 
+  app.get('/api/owner-diagnostics', requireActiveUser, requireStaff, rateLimit(30, 60_000), async (_req, res) => {
+    const checks: Array<{ key: string; label: string; status: string; detail: string }> = [
+      { key: 'supabase', label: 'Supabase', status: 'configured', detail: 'Server URL and publishable key are configured.' },
+      { key: 'authentication', label: 'Authentication', status: 'healthy', detail: 'The current access token and active account were verified server-side.' },
+    ];
+
+    const { error: databaseError } = await res.locals.userClient.from('site_settings').select('key').limit(1);
+    checks[0] = databaseError
+      ? { key: 'supabase', label: 'Supabase', status: 'degraded', detail: 'Configuration exists, but the database readiness query failed.' }
+      : { key: 'supabase', label: 'Supabase', status: 'healthy', detail: 'Configuration and database access are operational.' };
+
+    const geminiConfigured = Boolean(process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY !== 'MY_GEMINI_API_KEY');
+    checks.push({
+      key: 'gemini', label: 'Gemini', status: geminiConfigured ? 'configured' : 'not_configured',
+      detail: geminiConfigured ? 'A server-only Gemini key is configured.' : 'GEMINI_API_KEY is missing.',
+    });
+
+    const videoProvider = (process.env.VIDEO_PROVIDER || 'direct_html5').toLowerCase();
+    const bunnyConfigured = Boolean(process.env.BUNNY_STREAM_LIBRARY_ID && process.env.BUNNY_STREAM_API_KEY);
+    checks.push({
+      key: 'video', label: 'Video provider',
+      status: videoProvider === 'direct_html5' ? 'configured' : videoProvider === 'bunny' && bunnyConfigured ? 'degraded' : 'not_configured',
+      detail: videoProvider === 'bunny'
+        ? (bunnyConfigured ? 'Bunny settings are present, but the playback adapter remains a non-live integration placeholder.' : 'Bunny Stream was selected but required server configuration is missing.')
+        : 'Direct HTML5 video metadata is enabled; Bunny Stream is not active.',
+    });
+
+    const paymentProvider = (process.env.PAYMENT_PROVIDER || '').trim();
+    const paymentConfigured = Boolean(paymentProvider && process.env.PAYMENT_SECRET_KEY && process.env.PAYMENT_WEBHOOK_SECRET);
+    checks.push({
+      key: 'payment', label: 'Payment provider', status: paymentConfigured ? 'degraded' : 'not_configured',
+      detail: paymentConfigured ? `Settings exist for ${paymentProvider}, but no live gateway adapter is active; checkout remains fail-closed.` : 'No live payment gateway is configured; checkout remains fail-closed.',
+    });
+
+    const { error: mediaError } = await res.locals.userClient.from('media_assets').select('id').limit(1);
+    checks.push({
+      key: 'storage', label: 'Storage and media', status: mediaError ? 'degraded' : 'healthy',
+      detail: mediaError ? 'The media metadata readiness query failed.' : 'Private media metadata is reachable for the current staff account.',
+    });
+
+    return res.json({ checkedAt: new Date().toISOString(), checks });
+  });
+
   // API Route for AI English Tutor (Arabic friendly)
-  app.post('/api/ai-tutor', requireActiveUser, rateLimit(30, 60_000), requireGemini, async (req, res) => {
+  app.post('/api/ai-tutor', requireActiveUser, requireFeature('ai_tutor'), rateLimit(30, 60_000), requireGemini, async (req, res) => {
     try {
       const { message, history } = req.body;
 
@@ -227,7 +284,7 @@ async function startServer() {
   });
 
   // API Route for Dynamic AI Learning Pack Generator
-  app.post('/api/generate-lesson-pack', requireActiveUser, requireStaff, rateLimit(10, 5 * 60_000), requireGemini, async (req, res) => {
+  app.post('/api/generate-lesson-pack', requireActiveUser, requireStaff, requirePermission('ai.generate'), requireFeature('ai_content_generation'), rateLimit(10, 5 * 60_000), requireGemini, async (req, res) => {
     try {
       const { topic, level, wordCount = 10, sentenceCount = 5 } = req.body;
 
@@ -401,7 +458,7 @@ async function startServer() {
 
 
   // API Route for Owner AI Assistant (Lesson CMS generation, Question Bank generation, Analytics)
-  app.post('/api/owner-ai', requireActiveUser, requireStaff, rateLimit(20, 5 * 60_000), requireGemini, async (req, res) => {
+  app.post('/api/owner-ai', requireActiveUser, requireStaff, requirePermission('ai.generate'), requireFeature('ai_content_generation'), rateLimit(20, 5 * 60_000), requireGemini, async (req, res) => {
     try {
       const { taskType, prompt, level = 'B1' } = req.body;
 

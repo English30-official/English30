@@ -18,6 +18,10 @@ class OwnerCoursesService {
       `تم تغيير حالة الدرس إلى ${status === 'published' ? 'منشور (Published)' : 'مسودة (Draft)'}`);
     return status;
   }
+  async setLessonStatus(lesson: Lesson, status: ContentStatus): Promise<void> {
+    await lessonsService.setLessonStatus(lesson.id, status);
+    await auditService.logAction(`${status.toUpperCase()}_LESSON`, 'lessons', lesson.titleAr, `تم تغيير حالة الدرس إلى ${status}`);
+  }
   async createLesson(data: Omit<Lesson, 'id'>) {
     const lesson = await lessonsService.createLesson(data);
     await auditService.logAction('CREATE_LESSON', 'lessons', lesson.titleAr, `تم إنشاء درس جديد بحالة ${lesson.status}`);

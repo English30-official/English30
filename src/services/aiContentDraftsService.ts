@@ -16,11 +16,12 @@ class AIContentDraftsService {
       level: row.level as LevelCode,
       content: row.content,
       status: row.status,
+      lifecycleStatus: row.lifecycle_status ?? 'draft',
       createdAt: row.created_at,
     }));
   }
 
-  async create(input: Omit<AIGenerationDraft, 'id' | 'createdAt' | 'status'>): Promise<AIGenerationDraft> {
+  async create(input: Omit<AIGenerationDraft, 'id' | 'createdAt' | 'status' | 'lifecycleStatus'>): Promise<AIGenerationDraft> {
     const user = await getSupabaseClient().auth.getUser();
     if (user.error) throw user.error;
     const { data, error } = await getSupabaseClient().from('ai_content_drafts').insert({
@@ -33,16 +34,30 @@ class AIContentDraftsService {
       status: 'draft',
     }).select('*').single();
     if (error) throw error;
-    return { id: data.id, targetType: data.target_type, titleAr: data.title_ar, prompt: data.prompt, level: data.level, content: data.content, status: data.status, createdAt: data.created_at };
+    return { id: data.id, targetType: data.target_type, titleAr: data.title_ar, prompt: data.prompt, level: data.level, content: data.content, status: data.status, lifecycleStatus: data.lifecycle_status ?? 'draft', createdAt: data.created_at };
   }
 
   async updateStatus(id: string, status: AIGenerationDraft['status']): Promise<void> {
-    const { error } = await getSupabaseClient().from('ai_content_drafts').update({ status, updated_at: new Date().toISOString() }).eq('id', id);
+    const userId=(await getSupabaseClient().auth.getUser()).data.user?.id??null;
+    const lifecycleStatus=status==='applied'?'published':status==='discarded'?'archived':'draft';
+    const { error } = await getSupabaseClient().from('ai_content_drafts').update({ status, lifecycle_status:lifecycleStatus, approved_by:status==='applied'?userId:null, approved_at:status==='applied'?new Date().toISOString():null, updated_at: new Date().toISOString() }).eq('id', id);
     if (error) throw error;
   }
 
+  async updateLifecycleStatus(id: string, lifecycleStatus: AIGenerationDraft['lifecycleStatus']): Promise<void> {
+    const userId=(await getSupabaseClient().auth.getUser()).data.user?.id??null;
+    const status:AIGenerationDraft['status']=lifecycleStatus==='published'?'applied':lifecycleStatus==='archived'?'discarded':'draft';
+    const { error } = await getSupabaseClient().from('ai_content_drafts').update({
+      status, lifecycle_status:lifecycleStatus,
+      approved_by:lifecycleStatus==='published'?userId:null,
+      approved_at:lifecycleStatus==='published'?new Date().toISOString():null,
+      updated_at:new Date().toISOString(),
+    }).eq('id',id);
+    if(error)throw error;
+  }
+
   async delete(id: string): Promise<void> {
-    const { error } = await getSupabaseClient().from('ai_content_drafts').delete().eq('id', id);
+    const { error } = await getSupabaseClient().from('ai_content_drafts').update({status:'discarded',lifecycle_status:'archived',updated_at:new Date().toISOString()}).eq('id', id);
     if (error) throw error;
   }
 }
