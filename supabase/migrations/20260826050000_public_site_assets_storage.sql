@@ -42,11 +42,21 @@ begin
     return new;
   end if;
 
+  -- Public site assets are registered only by the trusted upload function after
+  -- server-side binary validation. Authenticated browser clients may still edit
+  -- non-structural fields such as alt_text/archive state through existing RLS,
+  -- but cannot forge a new accepted public asset record.
+  if auth.role() <> 'service_role' then
+    raise exception 'Public site assets must be registered through the trusted upload service';
+  end if;
+
   if new.kind <> 'image'
      or new.mime_type not in ('image/png','image/jpeg','image/webp','image/x-icon','image/vnd.microsoft.icon')
      or coalesce(new.size_bytes, 0) <= 0
      or new.size_bytes > 5242880
      or new.storage_path !~ '^(branding|courses|certificates|library)/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.(png|jpg|webp|ico)$'
+     or coalesce((new.metadata->>'binaryValidated')::boolean, false) is not true
+     or coalesce(new.metadata->>'sha256','') !~ '^[0-9a-f]{64}$'
   then
     raise exception 'Invalid public site asset metadata';
   end if;
@@ -65,53 +75,22 @@ $$;
 
 drop trigger if exists validate_public_site_asset on public.media_assets;
 create trigger validate_public_site_asset
-before insert or update of bucket_id, storage_path, mime_type, size_bytes, kind
+before insert or update of bucket_id, storage_path, mime_type, size_bytes, kind, metadata
 on public.media_assets
 for each row execute function private.validate_public_site_asset();
 
--- Table privileges only expose operations to PostgREST; RLS below and the
--- existing media_assets policy remain the authoritative authorization layer.
+-- Keep metadata management available through the existing media.manage RLS
+-- policy, while structural public-asset registration is enforced by the trigger.
 grant select, insert, update, delete on table public.media_assets to authenticated;
 
+-- Public site asset bytes are written only by the trusted Edge Function using
+-- the server-side service role. Do not grant browser-side Storage write paths.
 drop policy if exists site_assets_staff_select on storage.objects;
-create policy site_assets_staff_select on storage.objects
-for select to authenticated
-using (
-  bucket_id = 'site-assets'
-  and (select private.has_permission('media.manage'))
-);
-
 drop policy if exists site_assets_staff_insert on storage.objects;
-create policy site_assets_staff_insert on storage.objects
-for insert to authenticated
-with check (
-  bucket_id = 'site-assets'
-  and name ~ '^(branding|courses|certificates|library)/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.(png|jpg|webp|ico)$'
-  and (select private.has_permission('media.manage'))
-);
-
 drop policy if exists site_assets_staff_update on storage.objects;
-create policy site_assets_staff_update on storage.objects
-for update to authenticated
-using (
-  bucket_id = 'site-assets'
-  and (select private.has_permission('media.manage'))
-)
-with check (
-  bucket_id = 'site-assets'
-  and name ~ '^(branding|courses|certificates|library)/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.(png|jpg|webp|ico)$'
-  and (select private.has_permission('media.manage'))
-);
-
 drop policy if exists site_assets_staff_delete on storage.objects;
-create policy site_assets_staff_delete on storage.objects
-for delete to authenticated
-using (
-  bucket_id = 'site-assets'
-  and (select private.has_permission('media.manage'))
-);
 
 comment on function private.validate_public_site_asset() is
-  'Validates metadata rows for intentionally public, non-SVG site images. Binary upload limits are also enforced by the Storage bucket.';
+  'Requires service-role registration after trusted server-side binary validation for intentionally public, non-SVG site images.';
 
 commit;
