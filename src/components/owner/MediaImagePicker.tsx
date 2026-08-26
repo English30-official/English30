@@ -18,7 +18,11 @@ const dimensions = (asset: MediaAsset) => {
   const width = Number(asset.metadata.width || 0); const height = Number(asset.metadata.height || 0);
   return width > 0 && height > 0 ? `${width}×${height}` : 'الأبعاد غير متاحة';
 };
-const sizeLabel = (bytes?: number) => bytes ? `${(bytes / 1024).toFixed(bytes > 1024 * 1024 ? 0 : 1)} ${bytes > 1024 * 1024 ? 'MB' : 'KB'}` : '—';
+const sizeLabel = (bytes?: number) => {
+  if (!bytes) return '—';
+  if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+  return `${(bytes / 1024).toFixed(1)} KB`;
+};
 
 export const MediaImagePicker: React.FC<Props> = ({ label, valueUrl = '', valueAssetId, onChange, folder = 'library', allowFavicon = false, help }) => {
   const inputRef = useRef<HTMLInputElement>(null);
