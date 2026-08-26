@@ -31,7 +31,7 @@ export const Footer: React.FC<FooterProps> = ({ setActiveTab }) => {
           
           {/* Brand & Mission */}
           <OwnerEditable className="md:col-span-1" request={{ title: 'هوية وتواصل التذييل', fields: [
-            { key: 'siteName', label: 'اسم المنصة' }, { key: 'logoUrl', label: 'رابط الشعار', kind: 'url' }, { key: 'taglineAr', label: 'وصف المنصة', kind: 'textarea' },
+            { key: 'siteName', label: 'اسم المنصة' }, { key: 'logoUrl', label: 'الشعار الكامل', kind: 'image' }, { key: 'taglineAr', label: 'وصف المنصة', kind: 'textarea' },
             { key: 'footerHighlightAr', label: 'العبارة البارزة' }, { key: 'contactEmail', label: 'البريد', kind: 'text' }, { key: 'contactWhatsApp', label: 'واتساب' },
             { key: 'telegramChannelUrl', label: 'قناة تيليجرام', kind: 'url' }, { key: 'telegramBotUsername', label: 'بوت تيليجرام' }, { key: 'youtubeUrl', label: 'يوتيوب', kind: 'url' }, { key: 'xTwitterUrl', label: 'X', kind: 'url' }, { key: 'instagramUrl', label: 'إنستغرام', kind: 'url' },
           ] }}><div className="space-y-4">

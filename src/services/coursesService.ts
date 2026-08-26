@@ -1,5 +1,6 @@
 import { Course, ContentStatus, LevelCode } from '../types';
 import { getSupabaseClient, isSupabaseConfigured } from '../lib/supabase';
+import { mediaService } from './mediaService';
 
 type CoursesListener = (courses: Course[]) => void;
 
@@ -41,8 +42,8 @@ const toCourse = (row: CourseRow): Course => ({
 const hydrateThumbnail = async (row: CourseRow): Promise<Course> => {
   const course = toCourse(row);
   if (!row.media_assets) return course;
-  const { data, error } = await getSupabaseClient().storage.from(row.media_assets.bucket_id).createSignedUrl(row.media_assets.storage_path, 3600);
-  return !error && data?.signedUrl ? { ...course, image: data.signedUrl } : course;
+  try { return { ...course, image: await mediaService.resolveAssetUrl({ bucketId: row.media_assets.bucket_id, storagePath: row.media_assets.storage_path }) }; }
+  catch { return course; }
 };
 
 class CoursesService {

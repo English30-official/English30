@@ -116,7 +116,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
               <span>{settings.heroSecondaryCtaLabelAr}</span>
             </button>
           </div></OwnerEditable>
-          <OwnerEditable request={{ title: 'صور الصفحة الرئيسية', fields: [{ key: 'heroImageUrl', label: 'صورة البطل', kind: 'url' }, { key: 'homepageImages', label: 'معرض الصور (JSON)', kind: 'json', help: '["https://..."]' }] }}>
+          <OwnerEditable request={{ title: 'صور الصفحة الرئيسية', fields: [{ key: 'heroImageUrl', label: 'صورة البطل', kind: 'image' }, { key: 'homepageImages', label: 'معرض صور الصفحة الرئيسية', kind: 'image-list' }] }}>
             <>{settings.heroImageUrl && <img src={settings.heroImageUrl} alt="" className="mt-8 w-full max-h-80 object-cover rounded-3xl border" />}{(settings.homepageImages?.length ?? 0) > 0 && <div className="mt-6 grid grid-cols-2 sm:grid-cols-3 gap-3">{settings.homepageImages?.map((url, index) => <img key={`${url}-${index}`} src={url} alt="" loading="lazy" className="w-full h-32 object-cover rounded-2xl border"/>)}</div>}{ownerEditEnabled && !settings.heroImageUrl && settings.homepageImages.length === 0 && <div className="mt-6 rounded-2xl bg-amber-50 border border-amber-200 p-5 text-amber-800 text-sm font-bold">لا توجد صور رئيسية — اضغط لإضافتها</div>}</>
           </OwnerEditable>
 

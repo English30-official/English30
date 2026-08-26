@@ -19,10 +19,12 @@ import {
 } from 'lucide-react';
 import { settingsService, auditService } from '../../services';
 import { PlatformSettings, PricingFaqItem } from '../../types';
+import { MediaImageGalleryPicker, MediaImagePicker } from './MediaImagePicker';
 
 export const OwnerSettings: React.FC = () => {
   const [settings, setSettings] = useState<PlatformSettings>(settingsService.getSettingsSync());
   const [saveSuccess, setSaveSuccess] = useState(false);
+  const [saveError, setSaveError] = useState('');
 
   // New FAQ form state
   const [newFaqQuestion, setNewFaqQuestion] = useState('');
@@ -38,15 +40,14 @@ export const OwnerSettings: React.FC = () => {
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
-    await settingsService.updateSettings(settings);
-    await auditService.logAction(
-      'UPDATE_SETTINGS',
-      'platform_settings',
-      'إعدادات المنصة العامة',
-      'تحديث الأسعار، سياسة الاسترداد، الضريبة، بيانات التواصل، والشريط الإعلاني'
-    );
-    setSaveSuccess(true);
-    setTimeout(() => setSaveSuccess(false), 3000);
+    setSaveError('');
+    try {
+      const { featureFlags: _featureFlags, ...generalSettings } = settings;
+      await settingsService.updateSettings(generalSettings);
+      await auditService.logAction('UPDATE_SETTINGS', 'platform_settings', 'إعدادات المنصة العامة', 'تحديث الهوية المرئية، الأسعار، التواصل، SEO، والشريط الإعلاني');
+      setSaveSuccess(true);
+      setTimeout(() => setSaveSuccess(false), 3000);
+    } catch (reason) { setSaveError(reason instanceof Error ? reason.message : 'تعذر حفظ الإعدادات.'); }
   };
 
   const handleAddFaq = (e: React.FormEvent) => {
@@ -96,6 +97,7 @@ export const OwnerSettings: React.FC = () => {
           </div>
         )}
       </div>
+      {saveError && <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-2xl text-sm font-bold">{saveError}</div>}
 
       <form onSubmit={handleSave} className="space-y-8">
         
@@ -454,11 +456,15 @@ export const OwnerSettings: React.FC = () => {
             <div><h3 className="font-extrabold text-base text-slate-900">الهوية المرئية وSEO وحالة المنصة</h3><p className="text-xs text-slate-500">يمكن استخدام روابط الأصول الموقعة أو العامة المختارة من مكتبة الوسائط.</p></div>
           </div>
           <div className="grid md:grid-cols-2 gap-4">
-            {[['logoUrl','رابط الشعار'],['faviconUrl','رابط الأيقونة Favicon'],['heroImageUrl','صورة الواجهة الرئيسية'],['openGraphImageUrl','صورة Open Graph'],['contactEmail','البريد الرسمي'],['seoTitle','عنوان SEO']].map(([key,label])=><label key={key} className="text-xs font-bold">{label}<input value={String(settings[key as keyof PlatformSettings]||'')} onChange={e=>setSettings({...settings,[key]:e.target.value})} className="mt-1 w-full px-4 py-2.5 bg-slate-50 border rounded-xl text-sm" dir={key.includes('Url')||key==='contactEmail'?'ltr':'rtl'}/></label>)}
+            <MediaImagePicker label="الشعار الكامل" valueUrl={settings.logoUrl} folder="branding" onChange={(selected)=>setSettings({...settings,logoUrl:selected?.url||''})}/>
+            <MediaImagePicker label="أيقونة الموقع Favicon" valueUrl={settings.faviconUrl} folder="branding" allowFavicon help="PNG/JPEG/WebP أو ICO؛ لا يُسمح بـ SVG." onChange={(selected)=>setSettings({...settings,faviconUrl:selected?.url||''})}/>
+            <MediaImagePicker label="صورة الواجهة الرئيسية" valueUrl={settings.heroImageUrl} folder="branding" onChange={(selected)=>setSettings({...settings,heroImageUrl:selected?.url||''})}/>
+            <MediaImagePicker label="صورة Open Graph" valueUrl={settings.openGraphImageUrl} folder="branding" onChange={(selected)=>setSettings({...settings,openGraphImageUrl:selected?.url||''})}/>
+            {[['contactEmail','البريد الرسمي'],['seoTitle','عنوان SEO']].map(([key,label])=><label key={key} className="text-xs font-bold">{label}<input value={String(settings[key as keyof PlatformSettings]||'')} onChange={e=>setSettings({...settings,[key]:e.target.value})} className="mt-1 w-full px-4 py-2.5 bg-slate-50 border rounded-xl text-sm" dir={key==='contactEmail'?'ltr':'rtl'}/></label>)}
           </div>
           <label className="text-xs font-bold block">وصف SEO<textarea value={settings.seoDescription||''} onChange={e=>setSettings({...settings,seoDescription:e.target.value})} rows={2} className="mt-1 w-full px-4 py-2.5 bg-slate-50 border rounded-xl text-sm"/></label>
           <label className="text-xs font-bold block">محتوى التذييل<textarea value={settings.footerContentAr||''} onChange={e=>setSettings({...settings,footerContentAr:e.target.value})} rows={2} className="mt-1 w-full px-4 py-2.5 bg-slate-50 border rounded-xl text-sm"/></label>
-          <label className="text-xs font-bold block">صور الصفحة الرئيسية — رابط في كل سطر<textarea value={(settings.homepageImages||[]).join('\n')} onChange={e=>setSettings({...settings,homepageImages:e.target.value.split('\n').map(value=>value.trim()).filter(Boolean)})} rows={3} className="mt-1 w-full px-4 py-2.5 bg-slate-50 border rounded-xl text-sm" dir="ltr"/></label>
+          <MediaImageGalleryPicker label="صور الصفحة الرئيسية" value={settings.homepageImages||[]} folder="branding" onChange={(homepageImages)=>setSettings({...settings,homepageImages})}/>
           <div className="p-4 rounded-2xl bg-amber-50 border border-amber-200 space-y-3"><label className="flex items-center gap-2 text-sm font-black"><input type="checkbox" checked={settings.maintenanceMode?.enabled||false} onChange={e=>setSettings({...settings,maintenanceMode:{...settings.maintenanceMode,enabled:e.target.checked}})}/>وضع الصيانة للزوار والطلاب</label><input value={settings.maintenanceMode?.messageAr||''} onChange={e=>setSettings({...settings,maintenanceMode:{...settings.maintenanceMode,messageAr:e.target.value}})} placeholder="رسالة الصيانة" className="w-full px-4 py-2.5 bg-white border rounded-xl text-sm"/></div>
         </div>
 
