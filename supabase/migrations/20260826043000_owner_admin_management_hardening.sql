@@ -14,6 +14,7 @@ on conflict (code) do update set
 -- Role and permission assignment is exclusively an Owner operation. Admins
 -- receive only the capabilities explicitly selected by the Owner.
 drop policy if exists "staff manage roles" on public.user_roles;
+drop policy if exists "owner manages admin roles" on public.user_roles;
 create policy "owner manages admin roles" on public.user_roles for all to authenticated
 using ((select private.has_role('owner'::public.app_role)))
 with check ((select private.has_role('owner'::public.app_role)));
@@ -31,11 +32,13 @@ with check ((select private.has_role('owner'::public.app_role)));
 revoke insert, update, delete on table public.user_roles, public.role_permissions, public.user_permissions from authenticated;
 
 drop policy if exists "settings managers manage feature flags" on public.feature_flags;
+drop policy if exists "feature managers manage feature flags" on public.feature_flags;
 create policy "feature managers manage feature flags" on public.feature_flags for all to authenticated
 using ((select private.has_permission('features.manage')))
 with check ((select private.has_permission('features.manage')));
 
 drop policy if exists "settings managers manage pages" on public.cms_pages;
+drop policy if exists "page managers manage pages" on public.cms_pages;
 create policy "page managers manage pages" on public.cms_pages for all to authenticated
 using ((select private.has_permission('pages.manage')))
 with check ((select private.has_permission('pages.manage')));
