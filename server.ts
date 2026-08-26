@@ -132,7 +132,7 @@ async function startServer() {
   app.use('/api', (_req, res, next) => { res.setHeader('Cache-Control', 'no-store'); next(); });
   app.use(express.json({ limit: '100kb' }));
 
-  app.get('/api/owner-diagnostics', requireActiveUser, requireStaff, rateLimit(30, 60_000), async (_req, res) => {
+  app.get('/api/owner-diagnostics', requireActiveUser, requireStaff, requirePermission('diagnostics.view'), rateLimit(30, 60_000), async (_req, res) => {
     const checks: Array<{ key: string; label: string; status: string; detail: string }> = [
       { key: 'supabase', label: 'Supabase', status: 'configured', detail: 'Server URL and publishable key are configured.' },
       { key: 'authentication', label: 'Authentication', status: 'healthy', detail: 'The current access token and active account were verified server-side.' },
@@ -453,6 +453,50 @@ async function startServer() {
     } catch (err: any) {
       console.error('Lesson generator error:', err);
       return res.status(500).json({ error: 'حدث خطأ في إنشاء الدرس تلقائياً' });
+    }
+  });
+
+  const allowedBlockTypes = new Set(['heading','rich_text','vocabulary','example','grammar','note','flashcard','image','audio','video','exercise','quiz_reference','downloadable_resource']);
+  const cleanGeneratedBlock = (value: any) => {
+    if (!value || typeof value !== 'object' || !allowedBlockTypes.has(value.type)) throw new Error('AI returned an unsupported content block.');
+    const titleAr = typeof value.titleAr === 'string' ? value.titleAr.trim().slice(0, 240) : '';
+    if (!titleAr) throw new Error('AI returned a block without an Arabic title.');
+    const payload = value.payload && typeof value.payload === 'object' && !Array.isArray(value.payload) ? value.payload : {};
+    const serialized = JSON.stringify(payload);
+    if (serialized.length > 100000 || /"(__proto__|prototype|constructor)"\s*:/.test(serialized)) throw new Error('AI returned an unsafe or oversized block payload.');
+    return { type: value.type, titleAr, titleEn: typeof value.titleEn === 'string' ? value.titleEn.trim().slice(0, 240) : '', payload };
+  };
+
+  app.post('/api/owner-content-ai', requireActiveUser, requireStaff, requirePermission('ai.generate'), requireFeature('ai_content_generation'), rateLimit(12, 5 * 60_000), requireGemini, async (req, res) => {
+    try {
+      const { mode, prompt, level = 'A1', blockType, existingContent } = req.body ?? {};
+      if (!['lesson', 'block', 'rewrite'].includes(mode)) return res.status(400).json({ error: 'Invalid generation mode.' });
+      if (typeof prompt !== 'string' || prompt.trim().length < 5 || prompt.length > 4000) return res.status(400).json({ error: 'اكتب وصفًا واضحًا من 5 إلى 4000 حرف.' });
+      if (!['A1','A2','B1','B2','C1','C2'].includes(level)) return res.status(400).json({ error: 'Invalid CEFR level.' });
+      if (mode !== 'lesson' && !allowedBlockTypes.has(blockType)) return res.status(400).json({ error: 'Unsupported block type.' });
+      const apiKey = process.env.GEMINI_API_KEY!;
+      const ai = new GoogleGenAI({ apiKey });
+      const schema = mode === 'lesson'
+        ? '{"titleAr":"","titleEn":"","summaryAr":"","durationMinutes":20,"blocks":[{"type":"rich_text","titleAr":"","titleEn":"","payload":{"text":""}}]}'
+        : `{"type":"${blockType}","titleAr":"","titleEn":"","payload":{"text":""}}`;
+      const instruction = `أنت محرر مناهج English30. أنشئ محتوى تعليميًا دقيقًا لمستوى CEFR ${level}. أعد JSON صالحًا فقط مطابقًا للشكل ${schema}. أنواع الكتل المسموحة: ${[...allowedBlockTypes].join(', ')}. ضع محتوى منظمًا قابلًا للمراجعة داخل payload. لا تدّع النشر ولا تضف روابط غير موثوقة. المهمة: ${mode}. طلب المالك: ${prompt.trim()}${existingContent ? `\nالمحتوى الحالي المراد تحسينه: ${JSON.stringify(existingContent).slice(0, 12000)}` : ''}`;
+      const response = await ai.models.generateContent({ model: 'gemini-2.5-flash', contents: [{ role: 'user', parts: [{ text: instruction }] }] });
+      const raw = (response.text || '').replace(/```json/gi, '').replace(/```/g, '').trim();
+      const parsed = JSON.parse(raw);
+      if (mode === 'lesson') {
+        if (!parsed || typeof parsed !== 'object' || !Array.isArray(parsed.blocks) || parsed.blocks.length < 1 || parsed.blocks.length > 30) throw new Error('AI returned an invalid lesson structure.');
+        const draft = {
+          titleAr: String(parsed.titleAr || '').trim().slice(0, 240), titleEn: String(parsed.titleEn || '').trim().slice(0, 240),
+          summaryAr: String(parsed.summaryAr || '').trim().slice(0, 2000), durationMinutes: Math.max(1, Math.min(240, Number(parsed.durationMinutes) || 20)),
+          blocks: parsed.blocks.map(cleanGeneratedBlock),
+        };
+        if (!draft.titleAr || !draft.titleEn) throw new Error('AI returned a lesson without required titles.');
+        return res.json({ draft });
+      }
+      return res.json({ draft: cleanGeneratedBlock(parsed) });
+    } catch (error) {
+      console.error('Owner content AI generation failed', { name: error instanceof Error ? error.name : 'UnknownError', message: error instanceof Error ? error.message : 'unknown' });
+      return res.status(502).json({ error: 'تعذر إنشاء مسودة صالحة. تحقق من إعداد Gemini ثم حاول مرة أخرى.' });
     }
   });
 

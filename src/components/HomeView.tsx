@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { ActiveTab, Course, LevelCode, PricingPlan, PlatformSettings } from '../types';
 import { LEVELS_DATA } from '../data/mockData';
 import { coursesService, subscriptionsService, settingsService } from '../services';
+import { OwnerEditable, useOwnerEditMode } from './owner-edit/OwnerEditMode';
 import {
   Sparkles,
   ArrowLeft,
@@ -34,6 +35,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
   const [plans, setPlans] = useState<PricingPlan[]>([]);
   const [courses, setCourses] = useState<Course[]>([]);
   const [settings, setSettings] = useState<PlatformSettings>(settingsService.getSettingsSync());
+  const { enabled: ownerEditEnabled } = useOwnerEditMode();
 
   useEffect(() => {
     async function loadPlans() {
@@ -58,6 +60,13 @@ export const HomeView: React.FC<HomeViewProps> = ({
       unsubSettings();
     };
   }, []);
+  const followTarget = (target: string, fallback: () => void) => {
+    if (!target) return fallback();
+    if (/^https?:\/\//i.test(target)) { window.location.assign(target); return; }
+    const normalized = target.replace(/^#/, '') as ActiveTab;
+    if (normalized === 'lesson') return onStartLesson();
+    setActiveTab(normalized);
+  };
   return (
     <div className="space-y-16 py-8">
       
@@ -66,66 +75,55 @@ export const HomeView: React.FC<HomeViewProps> = ({
         <div className="relative z-10 max-w-4xl mx-auto text-center space-y-6">
           
           {/* Badge */}
-          <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-indigo-50 border border-indigo-100 text-indigo-700 font-bold text-xs sm:text-sm">
+          <OwnerEditable request={{ title: 'شارة الصفحة الرئيسية', fields: [{ key: 'homepageBadgeAr', label: 'نص الشارة' }] }} className="inline-block"><div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-indigo-50 border border-indigo-100 text-indigo-700 font-bold text-xs sm:text-sm">
             <Sparkles className="w-4 h-4 text-amber-500" />
-            <span>المنصة الأولى المخصصة كلياً للمتعلم العربي</span>
-          </div>
+            <span>{settings.homepageBadgeAr}</span>
+          </div></OwnerEditable>
 
           {/* Headline */}
-          <h1 className="text-3xl sm:text-5xl lg:text-6xl font-black tracking-tight leading-tight sm:leading-tight text-slate-800">
+          <OwnerEditable request={{ title: 'عنوان البطل', fields: [{ key: 'heroHeadlineAr', label: 'العنوان الرئيسي', kind: 'textarea' }] }}><h1 className="text-3xl sm:text-5xl lg:text-6xl font-black tracking-tight leading-tight sm:leading-tight text-slate-800">
             {settings.heroHeadlineAr || (
               <>
                 تعلم الإنجليزية بأسلوب <span className="text-indigo-600 font-english">{settings.siteName || 'English30'}</span>
                 <br className="hidden sm:inline" /> المنظم والتدريجي
               </>
             )}
-          </h1>
+          </h1></OwnerEditable>
 
           {/* Subtitle */}
-          <p className="text-base sm:text-lg text-slate-500 font-normal leading-relaxed max-w-2xl mx-auto">
+          <OwnerEditable request={{ title: 'وصف البطل', fields: [{ key: 'heroSubheadlineAr', label: 'الوصف', kind: 'textarea' }] }}><p className="text-base sm:text-lg text-slate-500 font-normal leading-relaxed max-w-2xl mx-auto">
             {settings.heroSubheadlineAr || 'من المبتدئ تماماً (A1) حتى الطلاقة التامة (C2). شرح عربي مبسط، تمارين تفاعلية، ومعلم ذكي بـ 30 دقيقة يومياً فقط.'}
-          </p>
+          </p></OwnerEditable>
 
           {/* Hero CTAs */}
-          <div className="flex flex-col sm:flex-row items-center justify-center gap-4 pt-4">
+          <OwnerEditable request={{ title: 'أزرار البطل', fields: [
+            { key: 'heroPrimaryCtaLabelAr', label: 'نص الزر الرئيسي' }, { key: 'heroPrimaryCtaTarget', label: 'وجهة الزر الرئيسي', help: 'اسم قسم مثل lesson أو رابط https' },
+            { key: 'heroSecondaryCtaLabelAr', label: 'نص الزر الثانوي' }, { key: 'heroSecondaryCtaTarget', label: 'وجهة الزر الثانوي', help: 'اسم قسم مثل placement-test أو رابط https' },
+          ] }}><div className="flex flex-col sm:flex-row items-center justify-center gap-4 pt-4">
             <button
-              onClick={onStartLesson}
+              onClick={() => followTarget(settings.heroPrimaryCtaTarget, onStartLesson)}
               className="w-full sm:w-auto flex items-center justify-center gap-3 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold px-8 py-4 rounded-xl text-base sm:text-lg shadow-lg shadow-indigo-200 transition-all hover:scale-105 active:scale-95 cursor-pointer"
             >
               <Play className="w-5 h-5 fill-white" />
-              <span>جرب درساً تفاعلياً الآن</span>
+              <span>{settings.heroPrimaryCtaLabelAr}</span>
             </button>
 
             <button
-              onClick={() => setActiveTab('placement-test')}
+              onClick={() => followTarget(settings.heroSecondaryCtaTarget, () => setActiveTab('placement-test'))}
               className="w-full sm:w-auto flex items-center justify-center gap-2 bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-700 font-bold px-7 py-4 rounded-xl text-base transition-all hover:scale-105 active:scale-95 cursor-pointer"
             >
               <Target className="w-5 h-5 text-indigo-600" />
-              <span>اختبار تحديد المستوى (5 دقائق)</span>
+              <span>{settings.heroSecondaryCtaLabelAr}</span>
             </button>
-          </div>
-          {settings.heroImageUrl && <img src={settings.heroImageUrl} alt="" className="mt-8 w-full max-h-80 object-cover rounded-3xl border" />}
-          {(settings.homepageImages?.length ?? 0) > 0 && <div className="mt-6 grid grid-cols-2 sm:grid-cols-3 gap-3">{settings.homepageImages?.map((url, index) => <img key={`${url}-${index}`} src={url} alt="" loading="lazy" className="w-full h-32 object-cover rounded-2xl border"/>)}</div>}
+          </div></OwnerEditable>
+          <OwnerEditable request={{ title: 'صور الصفحة الرئيسية', fields: [{ key: 'heroImageUrl', label: 'صورة البطل', kind: 'url' }, { key: 'homepageImages', label: 'معرض الصور (JSON)', kind: 'json', help: '["https://..."]' }] }}>
+            <>{settings.heroImageUrl && <img src={settings.heroImageUrl} alt="" className="mt-8 w-full max-h-80 object-cover rounded-3xl border" />}{(settings.homepageImages?.length ?? 0) > 0 && <div className="mt-6 grid grid-cols-2 sm:grid-cols-3 gap-3">{settings.homepageImages?.map((url, index) => <img key={`${url}-${index}`} src={url} alt="" loading="lazy" className="w-full h-32 object-cover rounded-2xl border"/>)}</div>}{ownerEditEnabled && !settings.heroImageUrl && settings.homepageImages.length === 0 && <div className="mt-6 rounded-2xl bg-amber-50 border border-amber-200 p-5 text-amber-800 text-sm font-bold">لا توجد صور رئيسية — اضغط لإضافتها</div>}</>
+          </OwnerEditable>
 
           {/* Quick Highlight Stats */}
-          <div className="pt-8 grid grid-cols-2 sm:grid-cols-4 gap-4 max-w-3xl mx-auto border-t border-slate-100 text-right sm:text-center">
-            <div className="bg-slate-50 p-3.5 rounded-2xl border border-slate-200/80">
-              <div className="text-xl sm:text-2xl font-black text-indigo-600 font-english">A1 ➔ C2</div>
-              <div className="text-xs text-slate-500 font-medium mt-0.5">منهج منظم متكامل</div>
-            </div>
-            <div className="bg-slate-50 p-3.5 rounded-2xl border border-slate-200/80">
-              <div className="text-xl sm:text-2xl font-black text-indigo-600 font-english">+25,000</div>
-              <div className="text-xs text-slate-500 font-medium mt-0.5">طالب يتمرن يومياً</div>
-            </div>
-            <div className="bg-slate-50 p-3.5 rounded-2xl border border-slate-200/80">
-              <div className="text-xl sm:text-2xl font-black text-emerald-600 font-english">100%</div>
-              <div className="text-xs text-slate-500 font-medium mt-0.5">شرح عربي بدون تعقيد</div>
-            </div>
-            <div className="bg-slate-50 p-3.5 rounded-2xl border border-slate-200/80">
-              <div className="text-xl sm:text-2xl font-black text-orange-500 font-english">AI Tutor</div>
-              <div className="text-xs text-slate-500 font-medium mt-0.5">مساعد ومصحح ذكي</div>
-            </div>
-          </div>
+          <OwnerEditable request={{ title: 'إحصاءات الصفحة الرئيسية', fields: [{ key: 'homepageStats', label: 'الإحصاءات (JSON)', kind: 'json', help: 'كل عنصر: value و labelAr و color اختياري' }] }}><div className="pt-8 grid grid-cols-2 sm:grid-cols-4 gap-4 max-w-3xl mx-auto border-t border-slate-100 text-right sm:text-center">
+            {settings.homepageStats.map((stat, index) => <div key={`${stat.value}-${index}`} className="bg-slate-50 p-3.5 rounded-2xl border border-slate-200/80"><div className={`text-xl sm:text-2xl font-black font-english ${stat.color === 'emerald' ? 'text-emerald-600' : stat.color === 'orange' ? 'text-orange-500' : 'text-indigo-600'}`}>{stat.value}</div><div className="text-xs text-slate-500 font-medium mt-0.5">{stat.labelAr}</div></div>)}
+          </div></OwnerEditable>
 
         </div>
       </section>
@@ -144,47 +142,9 @@ export const HomeView: React.FC<HomeViewProps> = ({
           </p>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-          <div className="bg-white p-6 rounded-2xl border border-slate-200/80 shadow-xs hover:shadow-md transition-shadow space-y-4">
-            <div className="w-12 h-12 rounded-xl bg-amber-100 text-amber-700 flex items-center justify-center font-bold">
-              <Clock className="w-6 h-6" />
-            </div>
-            <h3 className="font-bold text-lg text-slate-900">30 دقيقة يومياً</h3>
-            <p className="text-sm text-slate-600 leading-relaxed">
-              دروس مركزة ومصممة تناسب جدولك دون أن تسبب لك إرهاقاً، لضمان الاستمرارية وبناء عادة يومية ثابتة.
-            </p>
-          </div>
-
-          <div className="bg-white p-6 rounded-2xl border border-slate-200/80 shadow-xs hover:shadow-md transition-shadow space-y-4">
-            <div className="w-12 h-12 rounded-xl bg-indigo-100 text-indigo-700 flex items-center justify-center font-bold">
-              <BookOpen className="w-6 h-6" />
-            </div>
-            <h3 className="font-bold text-lg text-slate-900">شرح عربي يفهم عقليتك</h3>
-            <p className="text-sm text-slate-600 leading-relaxed">
-              توضيح القواعد والملاحظات الصعبة باللغة العربية مع ربطها بالأخطاء النحوية الشائعة التي يقع فيها العرب.
-            </p>
-          </div>
-
-          <div className="bg-white p-6 rounded-2xl border border-slate-200/80 shadow-xs hover:shadow-md transition-shadow space-y-4">
-            <div className="w-12 h-12 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center font-bold">
-              <MessageSquare className="w-6 h-6" />
-            </div>
-            <h3 className="font-bold text-lg text-slate-900">معلم ذكي AI متوفر دائماً</h3>
-            <p className="text-sm text-slate-600 leading-relaxed">
-              مساعد شخصي يصحح لك الجمل، يشرح المفردات المتقدمة، ويدربك على المحادثات في أي وقت تريد.
-            </p>
-          </div>
-
-          <div className="bg-white p-6 rounded-2xl border border-slate-200/80 shadow-xs hover:shadow-md transition-shadow space-y-4">
-            <div className="w-12 h-12 rounded-xl bg-violet-100 text-violet-700 flex items-center justify-center font-bold">
-              <Award className="w-6 h-6" />
-            </div>
-            <h3 className="font-bold text-lg text-slate-900">تطبيق حقيقي للمهارات الـ 6</h3>
-            <p className="text-sm text-slate-600 leading-relaxed">
-              تنمية متوازنة لـ (المفردات، القواعد، الاستماع، النطق، القراءة، والتفكير بالإنجليزية).
-            </p>
-          </div>
-        </div>
+        <OwnerEditable request={{ title: 'الأقسام التسويقية', fields: [{ key: 'homepageMarketingSections', label: 'الأقسام (JSON)', kind: 'json', help: 'كل عنصر: titleAr و descriptionAr و icon اختياري' }] }}><div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+          {settings.homepageMarketingSections.map((section, index) => <div key={`${section.titleAr}-${index}`} className="bg-white p-6 rounded-2xl border border-slate-200/80 shadow-xs hover:shadow-md transition-shadow space-y-4"><div className="w-12 h-12 rounded-xl bg-indigo-100 text-indigo-700 flex items-center justify-center font-bold">{section.icon === 'target' ? <Target className="w-6 h-6"/> : section.icon === 'sparkles' ? <Sparkles className="w-6 h-6"/> : section.icon === 'levels' ? <Award className="w-6 h-6"/> : <BookOpen className="w-6 h-6"/>}</div><h3 className="font-bold text-lg text-slate-900">{section.titleAr}</h3><p className="text-sm text-slate-600 leading-relaxed">{section.descriptionAr}</p></div>)}
+        </div></OwnerEditable>
       </section>
 
       {/* HOW IT WORKS */}

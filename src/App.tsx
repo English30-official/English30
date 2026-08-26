@@ -1,25 +1,27 @@
-import React, { useEffect, useState } from 'react';
+import React, { lazy, Suspense, useEffect, useState } from 'react';
 import { ActiveTab, Course, LevelCode, StudentStats, AppMode, PlatformSettings } from './types';
 import { Navbar } from './components/Navbar';
 import { Footer } from './components/Footer';
 import { HomeView } from './components/HomeView';
-import { LevelsView } from './components/LevelsView';
-import { CoursesView } from './components/CoursesView';
-import { LessonView } from './components/LessonView';
-import { PlacementTestView } from './components/PlacementTestView';
-import { DashboardView } from './components/DashboardView';
-import { VocabView } from './components/VocabView';
-import { QuizzesView } from './components/QuizzesView';
-import { AITutorView } from './components/AITutorView';
-import { PricingView } from './components/PricingView';
-import { OwnerDashboard } from './components/owner/OwnerDashboard';
 import { AuthView } from './components/AuthView';
 import { FirstOwnerActivation } from './components/FirstOwnerActivation';
-import { StudentCertificatesView } from './components/StudentCertificatesView';
-import { CertificateVerificationView } from './components/CertificateVerificationView';
-import { PublicPageView } from './components/PublicPageView';
 import { useAuth } from './auth/AuthContext';
 import { coursesService, progressService, settingsService } from './services';
+
+const LevelsView = lazy(() => import('./components/LevelsView').then((module) => ({ default: module.LevelsView })));
+const CoursesView = lazy(() => import('./components/CoursesView').then((module) => ({ default: module.CoursesView })));
+const LessonView = lazy(() => import('./components/LessonView').then((module) => ({ default: module.LessonView })));
+const PlacementTestView = lazy(() => import('./components/PlacementTestView').then((module) => ({ default: module.PlacementTestView })));
+const DashboardView = lazy(() => import('./components/DashboardView').then((module) => ({ default: module.DashboardView })));
+const VocabView = lazy(() => import('./components/VocabView').then((module) => ({ default: module.VocabView })));
+const QuizzesView = lazy(() => import('./components/QuizzesView').then((module) => ({ default: module.QuizzesView })));
+const AITutorView = lazy(() => import('./components/AITutorView').then((module) => ({ default: module.AITutorView })));
+const PricingView = lazy(() => import('./components/PricingView').then((module) => ({ default: module.PricingView })));
+const OwnerDashboard = lazy(() => import('./components/owner/OwnerDashboard').then((module) => ({ default: module.OwnerDashboard })));
+const StudentCertificatesView = lazy(() => import('./components/StudentCertificatesView').then((module) => ({ default: module.StudentCertificatesView })));
+const CertificateVerificationView = lazy(() => import('./components/CertificateVerificationView').then((module) => ({ default: module.CertificateVerificationView })));
+const PublicPageView = lazy(() => import('./components/PublicPageView').then((module) => ({ default: module.PublicPageView })));
+const viewFallback = <div className="min-h-[45vh] flex items-center justify-center text-sm font-bold text-slate-500" dir="rtl">جاري تحميل الواجهة...</div>;
 
 const EMPTY_STUDENT_STATS: StudentStats = {
   level: 'A1', xp: 0, streakDays: 0, wordsLearned: 0, totalWordsTarget: 1000,
@@ -81,9 +83,9 @@ export default function App() {
   };
   const activeFeature = featureForTab[activeTab];
   const featureDisabled = Boolean(activeFeature && settings.featureFlags[activeFeature] === false);
-  if (window.location.pathname === '/verify-certificate') return <CertificateVerificationView />;
-  if (window.location.pathname.startsWith('/pages/')) return <PublicPageView slug={window.location.pathname.slice('/pages/'.length)} />;
-  if (appMode === 'owner' && isStaff && !isSuspended) return <OwnerDashboard onSwitchToStudentView={() => setAppMode('student')} />;
+  if (window.location.pathname === '/verify-certificate') return <Suspense fallback={viewFallback}><CertificateVerificationView /></Suspense>;
+  if (window.location.pathname.startsWith('/pages/')) return <Suspense fallback={viewFallback}><PublicPageView slug={window.location.pathname.slice('/pages/'.length)} /></Suspense>;
+  if (appMode === 'owner' && isStaff && !isSuspended) return <Suspense fallback={viewFallback}><OwnerDashboard onSwitchToStudentView={() => setAppMode('student')} /></Suspense>;
   if (settings.maintenanceMode?.enabled && !isStaff) return <div className="min-h-screen bg-slate-950 text-white flex items-center justify-center p-6" dir="rtl"><div className="max-w-lg text-center"><div className="text-5xl mb-5">🛠️</div><h1 className="text-3xl font-black">{settings.siteName} تحت الصيانة</h1><p className="text-slate-300 mt-4 leading-8">{settings.maintenanceMode.messageAr}</p></div></div>;
 
   return (
@@ -98,7 +100,7 @@ export default function App() {
             <button onClick={() => void signOut()} className="bg-red-700 text-white px-5 py-3 rounded-xl font-bold">تسجيل الخروج</button>
           </div>
         ) : showAuth || needsAuth ? <AuthView onAuthenticated={() => setShowAuth(false)} /> : (
-          <>
+          <Suspense fallback={viewFallback}>
             {featureDisabled ? <div className="max-w-xl mx-auto my-16 bg-white border rounded-3xl p-8 text-center"><h1 className="text-xl font-black">الميزة غير متاحة حاليًا</h1><p className="text-sm text-slate-500 mt-3">تم تعطيل هذه الميزة من إعدادات المنصة.</p><button onClick={() => setActiveTab('home')} className="mt-5 bg-indigo-600 text-white px-5 py-3 rounded-xl font-bold">العودة للرئيسية</button></div> : <>
               {activeTab === 'home' && <HomeView setActiveTab={setActiveTab} onSelectCourse={handleSelectCourse} onStartLesson={handleStartLesson} />}
               {activeTab === 'levels' && <LevelsView setActiveTab={setActiveTab} />}
@@ -112,7 +114,7 @@ export default function App() {
               {activeTab === 'pricing' && <PricingView setActiveTab={setActiveTab} onStartLesson={handleStartLesson} />}
               {activeTab === 'certificates' && <StudentCertificatesView />}
             </>}
-          </>
+          </Suspense>
         )}
       </main>
       <Footer setActiveTab={setActiveTab} />
