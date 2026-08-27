@@ -1,8 +1,9 @@
 import React, { FormEvent, useEffect, useState } from 'react';
 import { Archive, ArrowDown, ArrowUp, Copy, Edit3, Eye, Layers3, Plus, RotateCcw, Save, Sparkles, X } from 'lucide-react';
-import { AIGeneratedBlockDraft, BlockType, ContentStatus, Course, Lesson, LessonBlock } from '../../types';
+import { AIGeneratedBlockDraft, AIGeneratedRewriteDraft, BlockType, ContentStatus, Course, Lesson, LessonBlock } from '../../types';
 import { aiContentDraftsService, coursesService, lessonsService, mediaService, ownerAIService, ownerCmsService } from '../../services';
 import type { MediaAsset } from '../../services';
+import { insertApprovedBlocksAsDraft, replaceApprovedBlockAsDraft } from '../../services/lessonAIDraftIntegration';
 
 const BLOCK_TYPES: Array<{ value: BlockType; label: string }> = [
   { value: 'heading', label: 'عنوان' }, { value: 'rich_text', label: 'نص منسق' },
@@ -29,7 +30,8 @@ export const OwnerLessonBuilder: React.FC = () => {
   const [error, setError] = useState('');
   const [aiPrompt, setAiPrompt] = useState('');
   const [aiBusy, setAiBusy] = useState(false);
-  const [aiProposal, setAiProposal] = useState<AIGeneratedBlockDraft | null>(null);
+  const [aiProposal, setAiProposal] = useState<{ mode: 'block' | 'rewrite'; block: AIGeneratedBlockDraft; changeSummaryAr?: string; draftId: string; requestId: string; model: string } | null>(null);
+  const [aiInsertPosition, setAiInsertPosition] = useState(0);
   const [structuredPayload, setStructuredPayload] = useState<Record<string, unknown> | null>(null);
 
   useEffect(() => {
@@ -51,6 +53,7 @@ export const OwnerLessonBuilder: React.FC = () => {
     setBlocks(await ownerCmsService.listBlocks(lessonId));
   };
   useEffect(() => { void loadBlocks().catch((reason) => setError(reason.message)); }, [lessonId]);
+  useEffect(() => { setAiInsertPosition(blocks.filter((block) => block.status !== 'archived').length); }, [lessonId, blocks.length]);
 
   const save = async (event: FormEvent) => {
     event.preventDefault(); if (!lessonId || !form.titleAr.trim()) return;
@@ -86,16 +89,48 @@ export const OwnerLessonBuilder: React.FC = () => {
     setAiBusy(true); setError('');
     try {
       const selectedLesson = lessons.find((lesson) => lesson.id === lessonId);
-      const generated = await ownerAIService.generateContentDraft({ mode: rewrite ? 'rewrite' : 'block', prompt: aiPrompt, level: selectedLesson?.level || 'A1', blockType: form.type, existingContent: rewrite ? { type: form.type, titleAr: form.titleAr || 'كتلة', titleEn: form.titleEn, payload: { text: form.text } } : undefined }) as AIGeneratedBlockDraft;
-      await aiContentDraftsService.create({ targetType: 'block', titleAr: generated.titleAr, prompt: aiPrompt, level: selectedLesson?.level || 'A1', content: generated });
-      setAiProposal(generated);
+      if (rewrite && !editingId) throw new Error('اختر كتلة موجودة ثم افتحها للتعديل قبل طلب إعادة الكتابة.');
+      const response = await ownerAIService.generateContentDraft({
+        mode: rewrite ? 'rewrite' : 'block',
+        prompt: aiPrompt,
+        level: selectedLesson?.level || 'A1',
+        durationMinutes: selectedLesson?.durationMinutes || 20,
+        blockType: form.type,
+        existingContent: rewrite ? {
+          type: form.type,
+          titleAr: form.titleAr || 'كتلة',
+          titleEn: form.titleEn,
+          payload: { text: form.text },
+        } : undefined,
+      });
+      const generated = response.draft;
+      const rewriteDraft = rewrite ? generated as AIGeneratedRewriteDraft : null;
+      const block = rewriteDraft ? rewriteDraft.block : generated as AIGeneratedBlockDraft;
+      setAiProposal({ mode: rewrite ? 'rewrite' : 'block', block, changeSummaryAr: rewriteDraft?.changeSummaryAr, draftId: response.draftId, requestId: response.requestId, model: response.model });
     } catch (reason) { setError(reason instanceof Error ? reason.message : 'تعذر إنشاء المحتوى.'); }
     finally { setAiBusy(false); }
   };
-  const approveAI = () => {
+  const approveAI = async () => {
+    if (!aiProposal || !lessonId) return;
+    setAiBusy(true); setError('');
+    try {
+      if (aiProposal.mode === 'rewrite') {
+        if (!editingId) throw new Error('لم تعد الكتلة المحددة متاحة لإعادة الكتابة.');
+        await replaceApprovedBlockAsDraft(ownerCmsService, editingId, aiProposal.block);
+        setEditingId(null); setForm(blankForm); setStructuredPayload(null);
+      } else {
+        await insertApprovedBlocksAsDraft(ownerCmsService, lessonId, [aiProposal.block], aiInsertPosition);
+      }
+      await aiContentDraftsService.markInsertedAsDraft(aiProposal.draftId);
+      setAiProposal(null); await loadBlocks();
+    } catch (reason) { setError(reason instanceof Error ? reason.message : 'تعذر اعتماد كتلة الذكاء الاصطناعي.'); }
+    finally { setAiBusy(false); }
+  };
+
+  const rejectAI = async () => {
     if (!aiProposal) return;
-    setForm({ ...form, type: aiProposal.type, titleAr: aiProposal.titleAr, titleEn: aiProposal.titleEn || '', text: String(aiProposal.payload.text || JSON.stringify(aiProposal.payload, null, 2)) });
-    setStructuredPayload(aiProposal.payload);
+    try { await aiContentDraftsService.updateStatus(aiProposal.draftId, 'discarded'); }
+    catch { /* The generated draft remains safely un-applied if audit status cannot be updated. */ }
     setAiProposal(null);
   };
 
@@ -114,7 +149,7 @@ export const OwnerLessonBuilder: React.FC = () => {
         <input value={form.titleEn} onChange={(event) => setForm({ ...form, titleEn: event.target.value })} placeholder="English title" className="border rounded-xl p-3 text-sm" dir="ltr"/>
       </div>
       <textarea value={form.text} onChange={(event) => { setForm({ ...form, text: event.target.value }); setStructuredPayload(null); }} placeholder="محتوى الكتلة" rows={4} className="w-full border rounded-xl p-3 text-sm"/>
-      <div className="rounded-2xl border border-violet-200 bg-violet-50 p-4 space-y-3"><div className="font-black text-violet-800 text-sm flex gap-2"><Sparkles className="w-4 h-4"/>مساعدة AI للكتلة</div><textarea value={aiPrompt} onChange={(event)=>setAiPrompt(event.target.value)} rows={2} placeholder="مثال: أنشئ 15 مفردة A1 عن الروتين اليومي مع أمثلة، أو بسّط النص الحالي" className="w-full border rounded-xl p-3 text-sm bg-white"/><div className="flex flex-wrap gap-2"><button type="button" disabled={aiBusy||aiPrompt.trim().length<5} onClick={()=>void generateBlock(false)} className="px-4 py-2 bg-violet-700 text-white rounded-xl text-xs font-black">{aiBusy?'جاري الإنشاء...':'✨ إنشاء بالذكاء الاصطناعي'}</button><button type="button" disabled={aiBusy||!form.text.trim()||aiPrompt.trim().length<5} onClick={()=>void generateBlock(true)} className="px-4 py-2 border border-violet-300 text-violet-800 rounded-xl text-xs font-black">إعادة كتابة/تبسيط الحالي</button></div><p className="text-[10px] text-violet-700">يُحفظ ناتج AI كسجل مسودة، ولا يضاف إلى الدرس أو يُنشر قبل اعتمادك.</p></div>
+      <div className="rounded-2xl border border-violet-200 bg-violet-50 p-4 space-y-3"><div className="font-black text-violet-800 text-sm flex gap-2"><Sparkles className="w-4 h-4"/>مساعدة AI للكتلة</div><textarea value={aiPrompt} onChange={(event)=>setAiPrompt(event.target.value)} rows={2} placeholder="مثال: أنشئ 15 مفردة A1 عن الروتين اليومي مع أمثلة، أو بسّط النص الحالي" className="w-full border rounded-xl p-3 text-sm bg-white"/><label className="block text-xs font-bold text-violet-900">موضع إدراج الكتلة الجديدة<select value={aiInsertPosition} onChange={(event)=>setAiInsertPosition(Number(event.target.value))} className="mt-1 w-full border rounded-xl p-2.5 bg-white">{Array.from({ length: blocks.filter((block) => block.status !== 'archived').length + 1 }, (_, index) => <option key={index} value={index}>{index === 0 ? 'بداية الدرس' : index === blocks.filter((block) => block.status !== 'archived').length ? 'نهاية الدرس' : `بعد الكتلة ${index}`}</option>)}</select></label><div className="flex flex-wrap gap-2"><button type="button" disabled={aiBusy||aiPrompt.trim().length<5} onClick={()=>void generateBlock(false)} className="px-4 py-2 bg-violet-700 text-white rounded-xl text-xs font-black">{aiBusy?'جاري الإنشاء...':'✨ إنشاء بالذكاء الاصطناعي'}</button><button type="button" disabled={aiBusy||!editingId||aiPrompt.trim().length<5} onClick={()=>void generateBlock(true)} className="px-4 py-2 border border-violet-300 text-violet-800 rounded-xl text-xs font-black">إعادة كتابة الكتلة المحددة</button></div><p className="text-[10px] text-violet-700">يُحفظ ناتج AI كسجل مسودة، ولا يضاف إلى الدرس أو يُنشر قبل اعتمادك.</p></div>
       {['image','audio','video','downloadable_resource'].includes(form.type) && <select value={form.mediaAssetId} onChange={(event) => setForm({ ...form, mediaAssetId: event.target.value })} className="w-full border rounded-xl p-3 text-sm"><option value="">اختر وسيطًا من المكتبة</option>{assets.map((asset) => <option key={asset.id} value={asset.id}>{asset.fileName} · {asset.provider}</option>)}</select>}
       <button disabled={busy || !lessonId} className="px-5 py-3 rounded-xl bg-indigo-600 text-white font-black text-sm flex items-center gap-2"><Save className="w-4 h-4"/>{busy ? 'جاري الحفظ...' : 'حفظ كمسودة'}</button>
     </form>
@@ -133,6 +168,6 @@ export const OwnerLessonBuilder: React.FC = () => {
         </div>
       </article>)}
     </div>
-    {aiProposal && <div className="fixed inset-0 z-[70] bg-slate-950/70 p-4 flex items-center justify-center"><div className="bg-white rounded-3xl p-6 w-full max-w-2xl space-y-4"><h3 className="text-xl font-black">مراجعة كتلة AI</h3><p className="text-sm font-black">{aiProposal.titleAr} <span className="text-xs bg-slate-100 px-2 py-1 rounded">{aiProposal.type}</span></p><pre className="max-h-80 overflow-auto text-xs whitespace-pre-wrap border rounded-xl p-4 bg-slate-50" dir="ltr">{JSON.stringify(aiProposal.payload,null,2)}</pre><div className="flex justify-end gap-2"><button onClick={()=>setAiProposal(null)} className="px-4 py-2 border rounded-xl font-bold text-sm">رفض</button><button onClick={approveAI} className="px-4 py-2 bg-indigo-600 text-white rounded-xl font-black text-sm">اعتماد داخل المحرر</button></div></div></div>}
+    {aiProposal && <div className="fixed inset-0 z-[70] bg-slate-950/70 p-4 flex items-center justify-center"><div className="bg-white rounded-3xl p-6 w-full max-w-2xl space-y-4"><h3 className="text-xl font-black">مراجعة كتلة AI</h3><p className="text-sm font-black">{aiProposal.block.titleAr} <span className="text-xs bg-slate-100 px-2 py-1 rounded">{aiProposal.block.type}</span></p>{aiProposal.changeSummaryAr && <p className="text-xs text-violet-700">{aiProposal.changeSummaryAr}</p>}<pre className="max-h-80 overflow-auto text-xs whitespace-pre-wrap border rounded-xl p-4 bg-slate-50" dir="ltr">{JSON.stringify(aiProposal.block.payload,null,2)}</pre><p className="text-[10px] text-slate-500">الطلب {aiProposal.requestId} · {aiProposal.model}. الاعتماد يحفظ الكتلة كمسودة فقط.</p><div className="flex justify-end gap-2"><button disabled={aiBusy} onClick={()=>void rejectAI()} className="px-4 py-2 border rounded-xl font-bold text-sm">رفض</button><button disabled={aiBusy} onClick={()=>void approveAI()} className="px-4 py-2 bg-indigo-600 text-white rounded-xl font-black text-sm">{aiProposal.mode === 'rewrite' ? 'استبدال الكتلة كمسودة' : 'إدراج في الموضع المحدد كمسودة'}</button></div></div></div>}
   </section>;
 };

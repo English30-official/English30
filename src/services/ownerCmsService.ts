@@ -1,4 +1,4 @@
-import { CmsPage, ContentStatus, ContentVersion, LessonBlock } from '../types';
+import { AIGeneratedBlockDraft, CmsPage, ContentStatus, ContentVersion, LessonBlock } from '../types';
 import { getSupabaseClient, isSupabaseConfigured } from '../lib/supabase';
 
 export interface FeatureFlagRecord {
@@ -113,6 +113,30 @@ class OwnerCmsService {
     }).select('*').single();
     if (error) throw error;
     return mapBlock(data);
+  }
+
+  async insertDraftBlocks(lessonId: string, blocks: AIGeneratedBlockDraft[], position: number): Promise<LessonBlock[]> {
+    if (!blocks.length) return [];
+    const client = requireSupabase();
+    const userId = (await client.auth.getUser()).data.user?.id ?? null;
+    const existing = (await this.listBlocks(lessonId, false)).sort((a, b) => a.orderIndex - b.orderIndex);
+    const insertAt = Math.max(0, Math.min(Math.trunc(position), existing.length));
+    const shifted = existing.filter((block) => block.orderIndex >= insertAt).sort((a, b) => b.orderIndex - a.orderIndex);
+    for (const block of shifted) await this.updateBlock(block.id, { orderIndex: block.orderIndex + blocks.length });
+    const rows = blocks.map((block, index) => ({
+      lesson_id: lessonId,
+      block_type: block.type,
+      title_ar: block.titleAr,
+      title_en: block.titleEn || null,
+      content: block.payload,
+      order_index: insertAt + index,
+      status: 'draft',
+      created_by: userId,
+      updated_by: userId,
+    }));
+    const { data, error } = await client.from('lesson_blocks').insert(rows).select('*');
+    if (error) throw error;
+    return (data ?? []).map(mapBlock).sort((a, b) => a.orderIndex - b.orderIndex);
   }
 
   async updateBlock(id: string, changes: Partial<LessonBlock>): Promise<LessonBlock> {

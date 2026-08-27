@@ -1,4 +1,4 @@
-import { AIGeneratedBlockDraft, AIGeneratedLessonDraft, BlockType, LevelCode } from '../types';
+import { LevelCode, OwnerContentAIRequest, OwnerContentAIResponse } from '../types';
 import { authenticatedJsonHeaders } from '../lib/api';
 
 class OwnerAIService {
@@ -15,11 +15,11 @@ class OwnerAIService {
     return data.reply || 'تمت معالجة الطلب بنجاح.';
   }
 
-  public async generateContentDraft(input: { mode: 'lesson' | 'block' | 'rewrite'; prompt: string; level: LevelCode; blockType?: BlockType; existingContent?: AIGeneratedBlockDraft }): Promise<AIGeneratedLessonDraft | AIGeneratedBlockDraft> {
+  public async generateContentDraft(input: OwnerContentAIRequest): Promise<OwnerContentAIResponse> {
     const res = await fetch('/api/owner-content-ai', { method: 'POST', headers: await authenticatedJsonHeaders(), body: JSON.stringify(input) });
     const body = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(body.error || `Server returned ${res.status}`);
-    return body.draft as AIGeneratedLessonDraft | AIGeneratedBlockDraft;
+    return body as OwnerContentAIResponse;
   }
 }
 
