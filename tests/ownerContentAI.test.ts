@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  buildGeminiOwnerContentRequest,
+  classifyGeminiProviderError,
+  DEFAULT_GEMINI_CONTENT_MODEL,
+  findGeminiSchemaCompatibilityIssues,
   generateValidatedOwnerContent,
+  OWNER_CONTENT_AI_SCHEMAS,
   OwnerContentAIError,
   parseOwnerContentAIInput,
   type GeminiStructuredGenerator,
@@ -56,6 +61,49 @@ test('accepts a valid full lesson response', async () => {
   assert.equal('blocks' in result.draft && result.draft.blocks.length, 3);
 });
 
+test('Gemini 3.6 request config uses only supported responseJsonSchema keywords', () => {
+  assert.equal(DEFAULT_GEMINI_CONTENT_MODEL, 'gemini-3.6-flash');
+  for (const [mode, schema] of Object.entries(OWNER_CONTENT_AI_SCHEMAS)) {
+    assert.deepEqual(findGeminiSchemaCompatibilityIssues(schema), [], `${mode} schema must be Gemini compatible`);
+    const encoded = JSON.stringify(schema);
+    assert.doesNotMatch(encoded, /"(?:minLength|maxLength)"/);
+  }
+  const request = buildGeminiOwnerContentRequest(DEFAULT_GEMINI_CONTENT_MODEL, input('lesson'));
+  assert.equal(request.model, 'gemini-3.6-flash');
+  assert.equal(request.config.responseMimeType, 'application/json');
+  assert.equal(request.config.responseJsonSchema, OWNER_CONTENT_AI_SCHEMAS.lesson);
+  assert.equal(request.config.maxOutputTokens, 16_384);
+});
+
+test('compatibility check identifies the unsupported string limits that caused provider rejection', () => {
+  const incompatible = { type: 'object', properties: { title: { type: 'string', minLength: 1, maxLength: 240 } } };
+  assert.deepEqual(findGeminiSchemaCompatibilityIssues(incompatible).map((issue) => issue.keyword), ['minLength', 'maxLength']);
+});
+
+test('provider diagnostics preserve status and expose only a safe schema category', () => {
+  const providerError = Object.assign(new Error('Invalid JSON payload: Unknown name "minLength" in responseJsonSchema. private prompt text'), { status: 400 });
+  const safe = classifyGeminiProviderError(providerError);
+  assert.deepEqual(safe, {
+    status: 400,
+    category: 'schema_rejected',
+    message: 'Gemini rejected an unsupported or overly complex response schema.',
+  });
+  assert.doesNotMatch(safe.message, /private prompt text/);
+});
+
+test('generation wraps provider failures with safe diagnostics for endpoint logging', async () => {
+  const providerError = Object.assign(new Error('Model models/gemini-2.5-flash is no longer available to new users. secret prompt'), { status: 404 });
+  const rejectingGenerator: GeminiStructuredGenerator = { async generateContent() { throw providerError; } };
+  await assert.rejects(
+    generateValidatedOwnerContent(rejectingGenerator, DEFAULT_GEMINI_CONTENT_MODEL, input('block')),
+    (error: unknown) => error instanceof OwnerContentAIError
+      && error.code === 'provider_request_failed'
+      && error.provider?.status === 404
+      && error.provider.category === 'model_unavailable'
+      && !error.provider.message.includes('secret prompt'),
+  );
+});
+
 test('accepts a valid single block response', async () => {
   const result = await generateValidatedOwnerContent(generator(JSON.stringify(block())), 'gemini-test', input('block'));
   assert.equal('type' in result.draft && result.draft.type, 'rich_text');
@@ -91,6 +139,15 @@ test('rejects excessive lesson block count', async () => {
   await assert.rejects(
     generateValidatedOwnerContent(generator(encoded, encoded), 'gemini-test', input('lesson')),
     (error: unknown) => error instanceof OwnerContentAIError && error.code === 'invalid_block_count',
+  );
+});
+
+test('server validation still enforces text limits omitted from Gemini schema', async () => {
+  const invalid = { ...block(), titleAr: 'س'.repeat(241) };
+  const encoded = JSON.stringify(invalid);
+  await assert.rejects(
+    generateValidatedOwnerContent(generator(encoded, encoded), 'gemini-test', input('block')),
+    (error: unknown) => error instanceof OwnerContentAIError && error.code === 'invalid_block_title_ar',
   );
 });
 

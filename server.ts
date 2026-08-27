@@ -9,6 +9,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { MAX_PUBLIC_SITE_IMAGE_BYTES, SiteImageValidationError, validatePublicSiteImage } from './server/mediaValidation';
 import {
   buildOwnerContentPromptSummary,
+  DEFAULT_GEMINI_CONTENT_MODEL,
   generateValidatedOwnerContent,
   OwnerContentAIError,
   parseOwnerContentAIInput,
@@ -564,8 +565,8 @@ async function startServer() {
     async (req, res) => {
       const requestId = randomUUID();
       res.setHeader('X-Request-Id', requestId);
-      const configuredModel = process.env.GEMINI_CONTENT_MODEL?.trim() || 'gemini-2.5-flash';
-      const model = /^[a-z0-9][a-z0-9._-]{2,80}$/i.test(configuredModel) ? configuredModel : 'gemini-2.5-flash';
+      const configuredModel = process.env.GEMINI_CONTENT_MODEL?.trim() || DEFAULT_GEMINI_CONTENT_MODEL;
+      const model = /^[a-z0-9][a-z0-9._-]{2,80}$/i.test(configuredModel) ? configuredModel : DEFAULT_GEMINI_CONTENT_MODEL;
       let mode = 'unknown';
       try {
         const input = parseOwnerContentAIInput(req.body);
@@ -618,6 +619,9 @@ async function startServer() {
           mode,
           model,
           validationRetryExhausted: safeError.retryableValidation,
+          providerStatus: safeError.provider?.status ?? null,
+          providerCategory: safeError.provider?.category ?? null,
+          providerMessage: safeError.provider?.message ?? null,
         });
         if (safeError.code.startsWith('invalid_') || safeError.code.startsWith('unsafe_') || safeError.code === 'existing_content_too_large') {
           return res.status(400).json({ error: `تعذر قبول بيانات الطلب. راجع الحقول ثم حاول مرة أخرى. رقم الطلب: ${requestId}`, requestId });
