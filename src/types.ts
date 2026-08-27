@@ -96,11 +96,41 @@ export interface AIGeneratedBlockDraft {
 }
 
 export interface AIGeneratedLessonDraft {
+  level: LevelCode;
   titleAr: string;
   titleEn: string;
   summaryAr: string;
   durationMinutes: number;
   blocks: AIGeneratedBlockDraft[];
+}
+
+export interface AIGeneratedRewriteDraft {
+  block: AIGeneratedBlockDraft;
+  changeSummaryAr: string;
+}
+
+export interface OwnerContentAIRequest {
+  mode: 'lesson' | 'block' | 'rewrite';
+  level: LevelCode;
+  prompt: string;
+  topic?: string;
+  learningObjective?: string;
+  durationMinutes?: number;
+  instructions?: string;
+  desiredBlockEmphasis?: BlockType[];
+  vocabularyCount?: number;
+  exerciseCount?: number;
+  blockType?: BlockType;
+  existingContent?: AIGeneratedBlockDraft;
+}
+
+export interface OwnerContentAIResponse {
+  draft: AIGeneratedLessonDraft | AIGeneratedBlockDraft | AIGeneratedRewriteDraft;
+  draftId: string;
+  requestId: string;
+  provider: 'google';
+  model: string;
+  attempts: number;
 }
 
 export type PermissionCode =

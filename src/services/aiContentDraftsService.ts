@@ -44,6 +44,18 @@ class AIContentDraftsService {
     if (error) throw error;
   }
 
+  async markInsertedAsDraft(id: string): Promise<void> {
+    const userId = (await getSupabaseClient().auth.getUser()).data.user?.id ?? null;
+    const { error } = await getSupabaseClient().from('ai_content_drafts').update({
+      status: 'applied',
+      lifecycle_status: 'draft',
+      approved_by: userId,
+      approved_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    }).eq('id', id);
+    if (error) throw error;
+  }
+
   async updateLifecycleStatus(id: string, lifecycleStatus: AIGenerationDraft['lifecycleStatus']): Promise<void> {
     const userId=(await getSupabaseClient().auth.getUser()).data.user?.id??null;
     const status:AIGenerationDraft['status']=lifecycleStatus==='published'?'applied':lifecycleStatus==='archived'?'discarded':'draft';

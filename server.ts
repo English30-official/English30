@@ -5,6 +5,14 @@ import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI } from '@google/genai';
 import dotenv from 'dotenv';
 import { createClient, User } from '@supabase/supabase-js';
+import { createHash, randomUUID } from 'node:crypto';
+import { MAX_PUBLIC_SITE_IMAGE_BYTES, SiteImageValidationError, validatePublicSiteImage } from './server/mediaValidation';
+import {
+  buildOwnerContentPromptSummary,
+  generateValidatedOwnerContent,
+  OwnerContentAIError,
+  parseOwnerContentAIInput,
+} from './server/ownerContentAI';
 
 dotenv.config();
 
@@ -54,6 +62,10 @@ async function startServer() {
   const authClient = createClient(supabaseUrl, supabaseKey, {
     auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
   });
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
+  const serviceClient = serviceRoleKey ? createClient(supabaseUrl, serviceRoleKey, {
+    auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+  }) : null;
 
   const requireActiveUser = async (req: Request, res: Response, next: NextFunction) => {
     const authorization = req.header('authorization') || '';
@@ -132,6 +144,90 @@ async function startServer() {
   app.use('/api', (_req, res, next) => { res.setHeader('Cache-Control', 'no-store'); next(); });
   app.use(express.json({ limit: '100kb' }));
 
+  app.post(
+    '/api/owner-media-upload',
+    requireActiveUser,
+    requireStaff,
+    requirePermission('media.manage'),
+    rateLimit(20, 60_000),
+    express.raw({ type: 'application/octet-stream', limit: MAX_PUBLIC_SITE_IMAGE_BYTES }),
+    async (req, res) => {
+      if (!serviceClient) return res.status(503).json({ error: 'Server media upload is not configured.' });
+      if (!req.is('application/octet-stream') || !Buffer.isBuffer(req.body)) return res.status(415).json({ error: 'Expected a binary image upload.' });
+      const decodeHeader = (name: string, maxLength: number) => {
+        const raw = req.header(name) || '';
+        try { return decodeURIComponent(raw).normalize('NFKC').replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, maxLength); }
+        catch { return ''; }
+      };
+      const originalFileName = decodeHeader('x-file-name', 240);
+      const altText = decodeHeader('x-alt-text', 500);
+      const requestedFolder = (req.header('x-media-folder') || '').toLowerCase();
+      const folder = new Set(['branding','courses','certificates','library']).has(requestedFolder) ? requestedFolder : 'library';
+      if (!originalFileName) return res.status(400).json({ error: 'A valid original filename is required.' });
+
+      let uploadedPath = '';
+      try {
+        const validated = validatePublicSiteImage(req.body, originalFileName);
+        const sha256 = createHash('sha256').update(req.body).digest('hex');
+        const { data: duplicate, error: duplicateError } = await serviceClient.from('media_assets').select('*')
+          .eq('bucket_id', 'site-assets').eq('kind', 'image').is('archived_at', null)
+          .contains('metadata', { sha256, binaryValidated: true }).limit(1).maybeSingle();
+        if (duplicateError) throw duplicateError;
+        if (duplicate) return res.status(200).json({ asset: duplicate, deduplicated: true });
+
+        uploadedPath = `${folder}/${randomUUID()}.${validated.extension}`;
+        const { error: uploadError } = await serviceClient.storage.from('site-assets').upload(uploadedPath, req.body, {
+          contentType: validated.mimeType,
+          cacheControl: '31536000',
+          upsert: false,
+        });
+        if (uploadError) throw uploadError;
+
+        const userId = (req as AuthenticatedRequest).authUser!.id;
+        const { data: asset, error: insertError } = await serviceClient.from('media_assets').insert({
+          uploaded_by: userId,
+          bucket_id: 'site-assets',
+          storage_path: uploadedPath,
+          file_name: originalFileName,
+          mime_type: validated.mimeType,
+          size_bytes: req.body.length,
+          alt_text: altText || null,
+          kind: 'image',
+          provider: 'supabase_storage',
+          metadata: {
+            width: validated.width,
+            height: validated.height,
+            sha256,
+            extension: validated.extension,
+            binaryValidated: true,
+            validationVersion: 1,
+          },
+        }).select('*').single();
+        if (insertError) {
+          await serviceClient.storage.from('site-assets').remove([uploadedPath]);
+          uploadedPath = '';
+          if (insertError.code === '23505') {
+            const { data: racedDuplicate } = await serviceClient.from('media_assets').select('*')
+              .eq('bucket_id', 'site-assets').eq('kind', 'image').is('archived_at', null)
+              .contains('metadata', { sha256, binaryValidated: true }).limit(1).maybeSingle();
+            if (racedDuplicate) return res.status(200).json({ asset: racedDuplicate, deduplicated: true });
+          }
+          throw insertError;
+        }
+        return res.status(201).json({ asset, deduplicated: false });
+      } catch (error) {
+        if (uploadedPath) await serviceClient.storage.from('site-assets').remove([uploadedPath]).catch(() => undefined);
+        console.error('Public site image upload rejected', {
+          userId: (req as AuthenticatedRequest).authUser?.id,
+          category: error instanceof SiteImageValidationError ? 'binary_validation' : 'storage_registration',
+          message: error instanceof Error ? error.message : 'unknown',
+        });
+        if (error instanceof SiteImageValidationError) return res.status(400).json({ error: error.message });
+        return res.status(502).json({ error: 'Unable to validate and register the image.' });
+      }
+    },
+  );
+
   app.get('/api/owner-diagnostics', requireActiveUser, requireStaff, requirePermission('diagnostics.view'), rateLimit(30, 60_000), async (_req, res) => {
     const checks: Array<{ key: string; label: string; status: string; detail: string }> = [
       { key: 'supabase', label: 'Supabase', status: 'configured', detail: 'Server URL and publishable key are configured.' },
@@ -168,8 +264,8 @@ async function startServer() {
 
     const { error: mediaError } = await res.locals.userClient.from('media_assets').select('id').limit(1);
     checks.push({
-      key: 'storage', label: 'Storage and media', status: mediaError ? 'degraded' : 'healthy',
-      detail: mediaError ? 'The media metadata readiness query failed.' : 'Private media metadata is reachable for the current staff account.',
+      key: 'storage', label: 'Storage and media', status: mediaError ? 'degraded' : serviceClient ? 'healthy' : 'not_configured',
+      detail: mediaError ? 'The media metadata readiness query failed.' : serviceClient ? 'Private media and trusted server-side public image validation are configured.' : 'Media metadata is reachable, but SUPABASE_SERVICE_ROLE_KEY is missing from the server.',
     });
 
     return res.json({ checkedAt: new Date().toISOString(), checks });
@@ -456,49 +552,86 @@ async function startServer() {
     }
   });
 
-  const allowedBlockTypes = new Set(['heading','rich_text','vocabulary','example','grammar','note','flashcard','image','audio','video','exercise','quiz_reference','downloadable_resource']);
-  const cleanGeneratedBlock = (value: any) => {
-    if (!value || typeof value !== 'object' || !allowedBlockTypes.has(value.type)) throw new Error('AI returned an unsupported content block.');
-    const titleAr = typeof value.titleAr === 'string' ? value.titleAr.trim().slice(0, 240) : '';
-    if (!titleAr) throw new Error('AI returned a block without an Arabic title.');
-    const payload = value.payload && typeof value.payload === 'object' && !Array.isArray(value.payload) ? value.payload : {};
-    const serialized = JSON.stringify(payload);
-    if (serialized.length > 100000 || /"(__proto__|prototype|constructor)"\s*:/.test(serialized)) throw new Error('AI returned an unsafe or oversized block payload.');
-    return { type: value.type, titleAr, titleEn: typeof value.titleEn === 'string' ? value.titleEn.trim().slice(0, 240) : '', payload };
-  };
-
-  app.post('/api/owner-content-ai', requireActiveUser, requireStaff, requirePermission('ai.generate'), requireFeature('ai_content_generation'), rateLimit(12, 5 * 60_000), requireGemini, async (req, res) => {
-    try {
-      const { mode, prompt, level = 'A1', blockType, existingContent } = req.body ?? {};
-      if (!['lesson', 'block', 'rewrite'].includes(mode)) return res.status(400).json({ error: 'Invalid generation mode.' });
-      if (typeof prompt !== 'string' || prompt.trim().length < 5 || prompt.length > 4000) return res.status(400).json({ error: 'اكتب وصفًا واضحًا من 5 إلى 4000 حرف.' });
-      if (!['A1','A2','B1','B2','C1','C2'].includes(level)) return res.status(400).json({ error: 'Invalid CEFR level.' });
-      if (mode !== 'lesson' && !allowedBlockTypes.has(blockType)) return res.status(400).json({ error: 'Unsupported block type.' });
-      const apiKey = process.env.GEMINI_API_KEY!;
-      const ai = new GoogleGenAI({ apiKey });
-      const schema = mode === 'lesson'
-        ? '{"titleAr":"","titleEn":"","summaryAr":"","durationMinutes":20,"blocks":[{"type":"rich_text","titleAr":"","titleEn":"","payload":{"text":""}}]}'
-        : `{"type":"${blockType}","titleAr":"","titleEn":"","payload":{"text":""}}`;
-      const instruction = `أنت محرر مناهج English30. أنشئ محتوى تعليميًا دقيقًا لمستوى CEFR ${level}. أعد JSON صالحًا فقط مطابقًا للشكل ${schema}. أنواع الكتل المسموحة: ${[...allowedBlockTypes].join(', ')}. ضع محتوى منظمًا قابلًا للمراجعة داخل payload. لا تدّع النشر ولا تضف روابط غير موثوقة. المهمة: ${mode}. طلب المالك: ${prompt.trim()}${existingContent ? `\nالمحتوى الحالي المراد تحسينه: ${JSON.stringify(existingContent).slice(0, 12000)}` : ''}`;
-      const response = await ai.models.generateContent({ model: 'gemini-2.5-flash', contents: [{ role: 'user', parts: [{ text: instruction }] }] });
-      const raw = (response.text || '').replace(/```json/gi, '').replace(/```/g, '').trim();
-      const parsed = JSON.parse(raw);
-      if (mode === 'lesson') {
-        if (!parsed || typeof parsed !== 'object' || !Array.isArray(parsed.blocks) || parsed.blocks.length < 1 || parsed.blocks.length > 30) throw new Error('AI returned an invalid lesson structure.');
-        const draft = {
-          titleAr: String(parsed.titleAr || '').trim().slice(0, 240), titleEn: String(parsed.titleEn || '').trim().slice(0, 240),
-          summaryAr: String(parsed.summaryAr || '').trim().slice(0, 2000), durationMinutes: Math.max(1, Math.min(240, Number(parsed.durationMinutes) || 20)),
-          blocks: parsed.blocks.map(cleanGeneratedBlock),
+  app.post(
+    '/api/owner-content-ai',
+    requireActiveUser,
+    requireStaff,
+    requirePermission('content.manage'),
+    requirePermission('ai.generate'),
+    requireFeature('ai_content_generation'),
+    rateLimit(12, 5 * 60_000),
+    requireGemini,
+    async (req, res) => {
+      const requestId = randomUUID();
+      res.setHeader('X-Request-Id', requestId);
+      const configuredModel = process.env.GEMINI_CONTENT_MODEL?.trim() || 'gemini-2.5-flash';
+      const model = /^[a-z0-9][a-z0-9._-]{2,80}$/i.test(configuredModel) ? configuredModel : 'gemini-2.5-flash';
+      let mode = 'unknown';
+      try {
+        const input = parseOwnerContentAIInput(req.body);
+        mode = input.mode;
+        const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
+        const generated = await generateValidatedOwnerContent({
+          generateContent: (request) => ai.models.generateContent(request),
+        }, model, input);
+        const persistedContent = {
+          requestType: input.mode,
+          level: input.level,
+          provider: 'google',
+          model,
+          requestId,
+          validatedDraft: generated.draft,
         };
-        if (!draft.titleAr || !draft.titleEn) throw new Error('AI returned a lesson without required titles.');
-        return res.json({ draft });
+        const generatedTitle = 'block' in generated.draft
+          ? generated.draft.block.titleAr
+          : generated.draft.titleAr;
+        const { data: persisted, error: persistenceError } = await res.locals.userClient
+          .from('ai_content_drafts')
+          .insert({
+            created_by: (req as AuthenticatedRequest).authUser!.id,
+            target_type: input.mode === 'lesson' ? 'lesson' : 'block',
+            title_ar: generatedTitle,
+            prompt: buildOwnerContentPromptSummary(input),
+            level: input.level,
+            content: persistedContent,
+            status: 'draft',
+            lifecycle_status: 'draft',
+          })
+          .select('id')
+          .single();
+        if (persistenceError || !persisted) throw new OwnerContentAIError('draft_persistence_failed');
+        return res.json({
+          draft: generated.draft,
+          draftId: persisted.id,
+          requestId,
+          provider: 'google',
+          model,
+          attempts: generated.attempts,
+        });
+      } catch (error) {
+        const safeError = error instanceof OwnerContentAIError
+          ? error
+          : new OwnerContentAIError('unexpected_owner_content_ai_error');
+        console.error('Owner content AI request failed', {
+          requestId,
+          code: safeError.code,
+          mode,
+          model,
+          validationRetryExhausted: safeError.retryableValidation,
+        });
+        if (safeError.code.startsWith('invalid_') || safeError.code.startsWith('unsafe_') || safeError.code === 'existing_content_too_large') {
+          return res.status(400).json({ error: `تعذر قبول بيانات الطلب. راجع الحقول ثم حاول مرة أخرى. رقم الطلب: ${requestId}`, requestId });
+        }
+        if (safeError.code === 'draft_persistence_failed') {
+          return res.status(503).json({ error: `تم إنشاء المحتوى لكن تعذر حفظ سجل المسودة بأمان. رقم الطلب: ${requestId}`, requestId });
+        }
+        if (safeError.code === 'provider_request_failed') {
+          return res.status(502).json({ error: `تعذر الاتصال بخدمة إنشاء المحتوى حاليًا. رقم الطلب: ${requestId}`, requestId });
+        }
+        return res.status(502).json({ error: `تعذر إنشاء مسودة متوافقة بعد محاولتي تحقق. رقم الطلب: ${requestId}`, requestId });
       }
-      return res.json({ draft: cleanGeneratedBlock(parsed) });
-    } catch (error) {
-      console.error('Owner content AI generation failed', { name: error instanceof Error ? error.name : 'UnknownError', message: error instanceof Error ? error.message : 'unknown' });
-      return res.status(502).json({ error: 'تعذر إنشاء مسودة صالحة. تحقق من إعداد Gemini ثم حاول مرة أخرى.' });
-    }
-  });
+    },
+  );
 
 
   // API Route for Owner AI Assistant (Lesson CMS generation, Question Bank generation, Analytics)

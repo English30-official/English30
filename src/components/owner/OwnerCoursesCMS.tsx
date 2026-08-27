@@ -3,7 +3,7 @@ import {
   BookOpen, Plus, CheckCircle, Clock, Archive, Edit3, Trash2, Eye, Layers,
   Sparkles, Video, FileText, HelpCircle, Volume2, Check, ChevronLeft,
 } from 'lucide-react';
-import { AIGeneratedLessonDraft, ContentStatus } from '../../types';
+import { AIGeneratedLessonDraft, BlockType, ContentStatus, LevelCode } from '../../types';
 import { useOwnerCoursesCMS } from '../../hooks/useOwnerCoursesCMS';
 import { OwnerCourseManager } from './OwnerCourseManager';
 import { LessonBlocksRenderer } from '../LessonBlocksRenderer';
@@ -17,23 +17,56 @@ export const OwnerCoursesCMS: React.FC = () => {
     handleSetLessonStatus, handleCreateLesson,
   } = useOwnerCoursesCMS();
   const [aiPrompt, setAiPrompt] = useState('');
+  const [aiTopic, setAiTopic] = useState('');
+  const [aiObjective, setAiObjective] = useState('');
+  const [aiInstructions, setAiInstructions] = useState('');
+  const [aiLevel, setAiLevel] = useState<LevelCode>('A1');
+  const [aiDuration, setAiDuration] = useState(20);
+  const [aiVocabularyCount, setAiVocabularyCount] = useState(10);
+  const [aiExerciseCount, setAiExerciseCount] = useState(5);
+  const [aiEmphasis, setAiEmphasis] = useState<BlockType[]>(['vocabulary', 'grammar', 'exercise']);
   const [aiBusy, setAiBusy] = useState(false);
   const [aiError, setAiError] = useState('');
-  const [aiProposal, setAiProposal] = useState<AIGeneratedLessonDraft | null>(null);
+  const [aiProposal, setAiProposal] = useState<{ draft: AIGeneratedLessonDraft; draftId: string; requestId: string; model: string } | null>(null);
+  const [acceptedBlocks, setAcceptedBlocks] = useState<Set<number>>(new Set());
   const generateLesson = async () => {
     setAiBusy(true); setAiError('');
     try {
-      const generated = await ownerAIService.generateContentDraft({ mode: 'lesson', prompt: aiPrompt, level: selectedCourse?.level || 'A1' }) as AIGeneratedLessonDraft;
-      await aiContentDraftsService.create({ targetType: 'lesson', titleAr: generated.titleAr, prompt: aiPrompt, level: selectedCourse?.level || 'A1', content: generated });
-      setAiProposal(generated);
+      const response = await ownerAIService.generateContentDraft({
+        mode: 'lesson',
+        prompt: aiPrompt || `أنشئ درسًا عن ${aiTopic}.`,
+        topic: aiTopic,
+        learningObjective: aiObjective,
+        level: aiLevel,
+        durationMinutes: aiDuration,
+        instructions: aiInstructions || undefined,
+        desiredBlockEmphasis: aiEmphasis,
+        vocabularyCount: aiVocabularyCount,
+        exerciseCount: aiExerciseCount,
+      });
+      const draft = response.draft as AIGeneratedLessonDraft;
+      setAiProposal({ draft, draftId: response.draftId, requestId: response.requestId, model: response.model });
+      setAcceptedBlocks(new Set(draft.blocks.map((_, index) => index)));
     } catch (reason) { setAiError(reason instanceof Error ? reason.message : 'تعذر إنشاء المسودة.'); }
     finally { setAiBusy(false); }
   };
-  const approveProposal = () => {
+  const approveProposal = async () => {
     if (!aiProposal) return;
-    setNewLessonData({ ...newLessonData, titleAr: aiProposal.titleAr, titleEn: aiProposal.titleEn, summaryAr: aiProposal.summaryAr, durationMinutes: aiProposal.durationMinutes, level: selectedCourse?.level || 'A1', status: 'draft' });
-    setNewLessonBlocks(aiProposal.blocks); setAiProposal(null);
+    const selectedBlocks = aiProposal.draft.blocks.filter((_, index) => acceptedBlocks.has(index));
+    if (!selectedBlocks.length) return setAiError('اختر كتلة واحدة على الأقل لاعتمادها.');
+    setNewLessonData({ ...newLessonData, titleAr: aiProposal.draft.titleAr, titleEn: aiProposal.draft.titleEn, summaryAr: aiProposal.draft.summaryAr, durationMinutes: aiProposal.draft.durationMinutes, level: aiProposal.draft.level, status: 'draft' });
+    setNewLessonBlocks(selectedBlocks);
+    await aiContentDraftsService.markInsertedAsDraft(aiProposal.draftId);
+    setAiProposal(null);
   };
+
+  const rejectProposal = async () => {
+    if (!aiProposal) return;
+    try { await aiContentDraftsService.updateStatus(aiProposal.draftId, 'discarded'); } catch { /* Unapplied remains safe. */ }
+    setAiProposal(null);
+  };
+
+  const toggleEmphasis = (type: BlockType) => setAiEmphasis((current) => current.includes(type) ? current.filter((item) => item !== type) : [...current, type]);
 
   return (
     <div className="space-y-8 animate-fadeIn" dir="rtl">
@@ -50,6 +83,7 @@ export const OwnerCoursesCMS: React.FC = () => {
         <button
           onClick={() => {
             setNewLessonData((prev) => ({ ...prev, unitNumber: lessons.length + 1 }));
+            setAiLevel(selectedCourse?.level || 'A1');
             setIsCreatingLesson(true);
           }}
           className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2.5 rounded-2xl font-bold text-xs sm:text-sm flex items-center gap-2 shadow-md shadow-indigo-200 transition-all cursor-pointer self-start sm:self-auto"
@@ -210,7 +244,21 @@ export const OwnerCoursesCMS: React.FC = () => {
             </div>
 
             <form onSubmit={handleCreateLesson} className="space-y-4">
-              <div className="rounded-2xl border border-violet-200 bg-violet-50 p-4 space-y-3"><div className="flex items-center gap-2 text-violet-800 font-black text-sm"><Sparkles className="w-4 h-4"/>✨ إنشاء مسودة بالذكاء الاصطناعي</div><textarea value={aiPrompt} onChange={(event) => setAiPrompt(event.target.value)} rows={3} placeholder="مثال: أنشئ درس A1 بعنوان Daily Routine لمدة 20 دقيقة مع مفردات وقاعدة وأمثلة وتمارين واختبار" className="w-full border rounded-xl p-3 text-sm bg-white"/><button type="button" disabled={aiBusy || aiPrompt.trim().length < 5} onClick={() => void generateLesson()} className="bg-violet-700 text-white px-4 py-2.5 rounded-xl text-xs font-black">{aiBusy ? 'جاري الإنشاء...' : '✨ إنشاء بالذكاء الاصطناعي'}</button>{aiError && <p className="text-xs text-red-700">{aiError}</p>}{newLessonBlocks.length > 0 && <p className="text-xs text-emerald-700 font-bold">تم اعتماد {newLessonBlocks.length} كتل للمسودة. لن تُنشر إلا بأمر نشر منفصل.</p>}</div>
+              <div className="rounded-2xl border border-violet-200 bg-violet-50 p-4 space-y-3">
+                <div className="flex items-center gap-2 text-violet-800 font-black text-sm"><Sparkles className="w-4 h-4"/>إنشاء مسودة منظمة بالذكاء الاصطناعي</div>
+                <div className="grid sm:grid-cols-2 gap-3">
+                  <label className="text-xs font-bold">مستوى CEFR<select value={aiLevel} onChange={(event) => setAiLevel(event.target.value as LevelCode)} className="mt-1 w-full border rounded-xl p-2.5 bg-white">{(['A1','A2','B1','B2','C1','C2'] as LevelCode[]).map((level) => <option key={level}>{level}</option>)}</select></label>
+                  <label className="text-xs font-bold">المدة التقريبية<input type="number" min={5} max={180} value={aiDuration} onChange={(event) => setAiDuration(Number(event.target.value))} className="mt-1 w-full border rounded-xl p-2.5 bg-white"/></label>
+                </div>
+                <input value={aiTopic} onChange={(event) => setAiTopic(event.target.value)} placeholder="موضوع الدرس، مثال: التعارف" className="w-full border rounded-xl p-3 text-sm bg-white"/>
+                <input value={aiObjective} onChange={(event) => setAiObjective(event.target.value)} placeholder="الهدف التعليمي، مثال: تقديم النفس والسؤال عن الاسم" className="w-full border rounded-xl p-3 text-sm bg-white"/>
+                <textarea value={aiPrompt} onChange={(event) => setAiPrompt(event.target.value)} rows={2} placeholder="الطلب المباشر (اختياري إذا أدخلت الموضوع)" className="w-full border rounded-xl p-3 text-sm bg-white"/>
+                <textarea value={aiInstructions} onChange={(event) => setAiInstructions(event.target.value)} rows={2} placeholder="تعليمات إضافية اختيارية" className="w-full border rounded-xl p-3 text-sm bg-white"/>
+                <div className="grid grid-cols-2 gap-3"><label className="text-xs font-bold">عدد المفردات<input type="number" min={0} max={30} value={aiVocabularyCount} onChange={(event)=>setAiVocabularyCount(Number(event.target.value))} className="mt-1 w-full border rounded-xl p-2.5 bg-white"/></label><label className="text-xs font-bold">عدد التمارين<input type="number" min={0} max={20} value={aiExerciseCount} onChange={(event)=>setAiExerciseCount(Number(event.target.value))} className="mt-1 w-full border rounded-xl p-2.5 bg-white"/></label></div>
+                <fieldset><legend className="text-xs font-bold mb-2">تركيز اختياري</legend><div className="flex flex-wrap gap-2">{(['vocabulary','grammar','example','exercise','quiz_reference'] as BlockType[]).map((type)=><label key={type} className="flex items-center gap-1.5 text-xs bg-white border rounded-lg px-2.5 py-2"><input type="checkbox" checked={aiEmphasis.includes(type)} onChange={()=>toggleEmphasis(type)}/>{type}</label>)}</div></fieldset>
+                <button type="button" disabled={aiBusy || (!aiTopic.trim() && aiPrompt.trim().length < 5)} onClick={() => void generateLesson()} className="bg-violet-700 text-white px-4 py-2.5 rounded-xl text-xs font-black">{aiBusy ? 'جاري الإنشاء والتحقق...' : 'إنشاء مسودة للمراجعة'}</button>
+                {aiError && <p className="text-xs text-red-700">{aiError}</p>}{newLessonBlocks.length > 0 && <p className="text-xs text-emerald-700 font-bold">تم اعتماد {newLessonBlocks.length} كتل للمسودة. لن تُنشر إلا بأمر نشر منفصل.</p>}
+              </div>
               
               <div>
                 <label className="text-xs font-bold text-slate-700 block mb-1">عنوان الدرس بالعربية *</label>
@@ -302,7 +350,7 @@ export const OwnerCoursesCMS: React.FC = () => {
           </div>
         </div>
       )}
-      {aiProposal && <div className="fixed inset-0 z-[70] bg-slate-950/70 p-4 flex items-center justify-center" dir="rtl"><div className="bg-white rounded-3xl p-6 w-full max-w-3xl max-h-[90vh] overflow-auto space-y-4"><h3 className="text-xl font-black">مراجعة اقتراح AI قبل إضافته</h3><p className="text-sm font-bold">{aiProposal.titleAr} · {aiProposal.titleEn}</p><p className="text-sm text-slate-600">{aiProposal.summaryAr}</p><div className="space-y-2">{aiProposal.blocks.map((block,index)=><div key={index} className="border rounded-xl p-3"><span className="text-[10px] bg-slate-100 px-2 py-1 rounded">{block.type}</span><strong className="block mt-2 text-sm">{block.titleAr}</strong><pre className="text-xs whitespace-pre-wrap mt-1 text-slate-600" dir="ltr">{JSON.stringify(block.payload,null,2)}</pre></div>)}</div><div className="flex justify-end gap-2"><button onClick={()=>setAiProposal(null)} className="px-4 py-2 border rounded-xl font-bold text-sm">رفض</button><button onClick={approveProposal} className="px-4 py-2 bg-indigo-600 text-white rounded-xl font-black text-sm">اعتماد كمسودة قابلة للتحرير</button></div></div></div>}
+      {aiProposal && <div className="fixed inset-0 z-[70] bg-slate-950/70 p-4 flex items-center justify-center" dir="rtl"><div className="bg-white rounded-3xl p-6 w-full max-w-3xl max-h-[90vh] overflow-auto space-y-4"><h3 className="text-xl font-black">مراجعة الدرس قبل إضافته</h3><p className="text-sm font-bold">{aiProposal.draft.titleAr} · {aiProposal.draft.titleEn}</p><p className="text-sm text-slate-600">{aiProposal.draft.summaryAr}</p><div className="flex gap-2"><button onClick={()=>setAcceptedBlocks(new Set(aiProposal.draft.blocks.map((_,index)=>index)))} className="text-xs border rounded-lg px-3 py-2">قبول الكل</button><button onClick={()=>setAcceptedBlocks(new Set())} className="text-xs border rounded-lg px-3 py-2">إلغاء تحديد الكل</button></div><div className="space-y-2">{aiProposal.draft.blocks.map((block,index)=><label key={index} className={`block border rounded-xl p-3 cursor-pointer ${acceptedBlocks.has(index)?'border-indigo-400 bg-indigo-50/40':'border-slate-200'}`}><div className="flex gap-2 items-start"><input type="checkbox" checked={acceptedBlocks.has(index)} onChange={()=>setAcceptedBlocks((current)=>{const next=new Set(current);next.has(index)?next.delete(index):next.add(index);return next;})}/><div className="flex-1"><span className="text-[10px] bg-slate-100 px-2 py-1 rounded">{index+1}. {block.type}</span><strong className="block mt-2 text-sm">{block.titleAr}</strong><pre className="text-xs whitespace-pre-wrap mt-1 text-slate-600" dir="ltr">{JSON.stringify(block.payload,null,2)}</pre></div></div></label>)}</div><p className="text-[10px] text-slate-500">الطلب {aiProposal.requestId} · {aiProposal.model}. ستنتقل الكتل المحددة فقط إلى محرر الدرس كمسودات.</p><div className="flex justify-end gap-2"><button onClick={()=>void rejectProposal()} className="px-4 py-2 border rounded-xl font-bold text-sm">رفض</button><button disabled={!acceptedBlocks.size} onClick={()=>void approveProposal()} className="px-4 py-2 bg-indigo-600 disabled:opacity-50 text-white rounded-xl font-black text-sm">اعتماد {acceptedBlocks.size} كتل كمسودة</button></div></div></div>}
 
       {/* Modal: Lesson Blocks Preview */}
       {previewLesson && (
