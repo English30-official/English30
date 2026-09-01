@@ -7,6 +7,8 @@ export const OWNER_AI_BLOCK_TYPES = [
 
 export const OWNER_AI_LEVELS = ['A1', 'A2', 'B1', 'B2', 'C1', 'C2'] as const satisfies readonly LevelCode[];
 
+export const DEFAULT_GEMINI_CONTENT_MODEL = 'gemini-3.6-flash';
+
 export type OwnerContentAIMode = 'lesson' | 'block' | 'rewrite';
 
 export interface OwnerContentAIInput {
@@ -48,18 +50,16 @@ const MAX_BLOCKS = 20;
 const MAX_PAYLOAD_BYTES = 30_000;
 const MAX_DRAFT_BYTES = 180_000;
 
-const stringSchema = (description: string, maxLength: number, minLength = 0): JsonSchema => ({
-  type: 'string', description, minLength, maxLength,
-});
+const stringSchema = (description: string): JsonSchema => ({ type: 'string', description });
 
 const vocabularyItemSchema: JsonSchema = {
   type: 'object',
   additionalProperties: false,
   properties: {
-    term: stringSchema('English vocabulary term or short phrase.', 120, 1),
-    translationAr: stringSchema('Concise Arabic meaning.', 240, 1),
-    exampleEn: stringSchema('Natural English example at the requested CEFR level.', 500, 1),
-    exampleAr: stringSchema('Accurate Arabic translation of the example.', 500, 1),
+    term: stringSchema('English vocabulary term or short phrase. It must not be empty and must be concise.'),
+    translationAr: stringSchema('Concise non-empty Arabic meaning.'),
+    exampleEn: stringSchema('Natural non-empty English example at the requested CEFR level.'),
+    exampleAr: stringSchema('Accurate non-empty Arabic translation of the example.'),
   },
   required: ['term', 'translationAr', 'exampleEn', 'exampleAr'],
 };
@@ -68,8 +68,8 @@ const exampleSchema: JsonSchema = {
   type: 'object',
   additionalProperties: false,
   properties: {
-    english: stringSchema('Natural English example.', 600, 1),
-    arabic: stringSchema('Arabic translation or concise explanation.', 600, 1),
+    english: stringSchema('Natural non-empty English example.'),
+    arabic: stringSchema('Non-empty Arabic translation or concise explanation.'),
   },
   required: ['english', 'arabic'],
 };
@@ -78,16 +78,16 @@ const questionSchema: JsonSchema = {
   type: 'object',
   additionalProperties: false,
   properties: {
-    prompt: stringSchema('Question that is answerable from lesson content.', 800, 1),
+    prompt: stringSchema('Non-empty question that is answerable from lesson content.'),
     options: {
       type: 'array', minItems: 2, maxItems: 5,
-      items: stringSchema('One plausible answer option.', 400, 1),
+      items: stringSchema('One non-empty plausible answer option.'),
     },
     correctAnswerIndex: {
       type: 'integer', minimum: 0, maximum: 4,
       description: 'Zero-based index of the correct option.',
     },
-    explanationAr: stringSchema('Concise Arabic explanation of the answer.', 800, 1),
+    explanationAr: stringSchema('Concise non-empty Arabic explanation of the answer.'),
   },
   required: ['prompt', 'options', 'correctAnswerIndex', 'explanationAr'],
 };
@@ -96,7 +96,7 @@ const payloadSchema: JsonSchema = {
   type: 'object',
   additionalProperties: false,
   properties: {
-    text: stringSchema('Complete readable block content. Do not use HTML or Markdown links.', 12_000, 1),
+    text: stringSchema('Complete non-empty readable block content. Do not use HTML or Markdown links.'),
     vocabularyItems: { type: 'array', maxItems: 30, items: vocabularyItemSchema },
     examples: { type: 'array', maxItems: 20, items: exampleSchema },
     questions: { type: 'array', maxItems: 20, items: questionSchema },
@@ -109,8 +109,8 @@ const blockSchema: JsonSchema = {
   additionalProperties: false,
   properties: {
     type: { type: 'string', enum: [...OWNER_AI_BLOCK_TYPES], description: 'Existing English30 lesson block type.' },
-    titleAr: stringSchema('Clear Arabic block title.', 240, 1),
-    titleEn: stringSchema('Concise English block title; use an empty string only when unnecessary.', 240),
+    titleAr: stringSchema('Clear non-empty Arabic block title.'),
+    titleEn: stringSchema('Concise English block title; use an empty string only when unnecessary.'),
     payload: payloadSchema,
   },
   required: ['type', 'titleAr', 'titleEn', 'payload'],
@@ -122,9 +122,9 @@ export const OWNER_CONTENT_AI_SCHEMAS: Record<OwnerContentAIMode, JsonSchema> = 
     additionalProperties: false,
     properties: {
       level: { type: 'string', enum: [...OWNER_AI_LEVELS] },
-      titleAr: stringSchema('Arabic lesson title.', 240, 1),
-      titleEn: stringSchema('English lesson title.', 240, 1),
-      summaryAr: stringSchema('Concise Arabic learning summary.', 2_000, 1),
+      titleAr: stringSchema('Non-empty Arabic lesson title.'),
+      titleEn: stringSchema('Non-empty English lesson title.'),
+      summaryAr: stringSchema('Concise non-empty Arabic learning summary.'),
       durationMinutes: { type: 'integer', minimum: 5, maximum: 180 },
       blocks: { type: 'array', minItems: 1, maxItems: MAX_BLOCKS, items: blockSchema },
     },
@@ -136,20 +136,98 @@ export const OWNER_CONTENT_AI_SCHEMAS: Record<OwnerContentAIMode, JsonSchema> = 
     additionalProperties: false,
     properties: {
       block: blockSchema,
-      changeSummaryAr: stringSchema('Short Arabic summary of the improvements.', 1_000, 1),
+      changeSummaryAr: stringSchema('Short non-empty Arabic summary of the improvements.'),
     },
     required: ['block', 'changeSummaryAr'],
   },
 };
 
+const isRecord = (value: unknown): value is JsonObject => Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+
+export const GEMINI_RESPONSE_JSON_SCHEMA_KEYWORDS = new Set([
+  '$id', '$defs', '$ref', '$anchor', 'type', 'format', 'title', 'description', 'enum',
+  'items', 'prefixItems', 'minItems', 'maxItems', 'minimum', 'maximum', 'anyOf',
+  'oneOf', 'properties', 'additionalProperties', 'required', 'propertyOrdering',
+]);
+
+export interface GeminiSchemaCompatibilityIssue { path: string; keyword: string }
+
+export const findGeminiSchemaCompatibilityIssues = (schema: unknown): GeminiSchemaCompatibilityIssue[] => {
+  const issues: GeminiSchemaCompatibilityIssue[] = [];
+  const visit = (value: unknown, path: string, arbitraryKeys = false): void => {
+    if (Array.isArray(value)) {
+      value.forEach((item, index) => visit(item, `${path}[${index}]`));
+      return;
+    }
+    if (!isRecord(value)) return;
+    for (const [key, child] of Object.entries(value)) {
+      const childPath = `${path}.${key}`;
+      if (!arbitraryKeys && !GEMINI_RESPONSE_JSON_SCHEMA_KEYWORDS.has(key)) {
+        issues.push({ path: childPath, keyword: key });
+        continue;
+      }
+      if (key === 'properties' || key === '$defs') visit(child, childPath, true);
+      else visit(child, childPath);
+    }
+  };
+  visit(schema, '$');
+  return issues;
+};
+
+for (const [mode, schema] of Object.entries(OWNER_CONTENT_AI_SCHEMAS)) {
+  const issues = findGeminiSchemaCompatibilityIssues(schema);
+  if (issues.length) throw new Error(`Gemini schema for ${mode} contains unsupported keywords: ${issues.map((issue) => issue.keyword).join(', ')}`);
+}
+
+export type SafeProviderErrorCategory =
+  | 'schema_rejected' | 'model_unavailable' | 'authentication' | 'rate_limited'
+  | 'provider_unavailable' | 'network' | 'invalid_request' | 'unknown';
+
+export interface SafeProviderErrorDetails {
+  status?: number;
+  category: SafeProviderErrorCategory;
+  message: string;
+}
+
+export const classifyGeminiProviderError = (error: unknown): SafeProviderErrorDetails => {
+  const record = isRecord(error) ? error : {};
+  const statusCandidates = [record.status, record.statusCode, record.code];
+  const status = statusCandidates.find((value) => typeof value === 'number') as number | undefined;
+  const rawMessage = error instanceof Error ? error.message : '';
+  const normalized = rawMessage.toLowerCase();
+  if (/minlength|maxlength|response[_ ]?json[_ ]?schema|response schema|schema.*(invalid|unsupported|complex)/i.test(rawMessage)) {
+    return { status, category: 'schema_rejected', message: 'Gemini rejected an unsupported or overly complex response schema.' };
+  }
+  if (/model.*(not found|not available|unsupported|deprecated)|no longer available/i.test(rawMessage) || status === 404) {
+    return { status, category: 'model_unavailable', message: 'The configured Gemini model is unavailable.' };
+  }
+  if (status === 401 || status === 403 || /api key|permission denied|unauthenticated/i.test(rawMessage)) {
+    return { status, category: 'authentication', message: 'Gemini authentication or project authorization failed.' };
+  }
+  if (status === 429 || /quota|rate.?limit|resource exhausted/i.test(rawMessage)) {
+    return { status, category: 'rate_limited', message: 'Gemini rate limit or quota was reached.' };
+  }
+  if ((status !== undefined && status >= 500) || /service unavailable|internal server error/i.test(rawMessage)) {
+    return { status, category: 'provider_unavailable', message: 'Gemini is temporarily unavailable.' };
+  }
+  if (/fetch failed|network|timeout|timed out|econnreset|enotfound/i.test(normalized)) {
+    return { status, category: 'network', message: 'The server could not reach Gemini.' };
+  }
+  if (status === 400) return { status, category: 'invalid_request', message: 'Gemini rejected the structured generation request.' };
+  return { status, category: 'unknown', message: 'Gemini generation failed for an unclassified provider reason.' };
+};
+
 export class OwnerContentAIError extends Error {
-  constructor(public readonly code: string, message = code, public readonly retryableValidation = false) {
+  constructor(
+    public readonly code: string,
+    message = code,
+    public readonly retryableValidation = false,
+    public readonly provider?: SafeProviderErrorDetails,
+  ) {
     super(message);
     this.name = 'OwnerContentAIError';
   }
 }
-
-const isRecord = (value: unknown): value is JsonObject => Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 
 const assertExactKeys = (value: JsonObject, allowed: readonly string[], code: string) => {
   const allowedSet = new Set(allowed);
@@ -406,18 +484,36 @@ const buildGenerationPrompt = (input: OwnerContentAIInput, repairCode?: string):
 };
 
 export interface GeminiStructuredGenerator {
-  generateContent(request: {
-    model: string;
-    contents: Array<{ role: 'user'; parts: Array<{ text: string }> }>;
-    config: {
-      responseMimeType: 'application/json';
-      responseJsonSchema: JsonSchema;
-      systemInstruction: string;
-      maxOutputTokens: number;
-      temperature: number;
-    };
-  }): Promise<{ text?: string }>;
+  generateContent(request: GeminiOwnerContentRequest): Promise<{ text?: string }>;
 }
+
+export interface GeminiOwnerContentRequest {
+  model: string;
+  contents: Array<{ role: 'user'; parts: Array<{ text: string }> }>;
+  config: {
+    responseMimeType: 'application/json';
+    responseJsonSchema: JsonSchema;
+    systemInstruction: string;
+    maxOutputTokens: number;
+    temperature: number;
+  };
+}
+
+export const buildGeminiOwnerContentRequest = (
+  model: string,
+  input: OwnerContentAIInput,
+  repairCode?: string,
+): GeminiOwnerContentRequest => ({
+  model,
+  contents: [{ role: 'user', parts: [{ text: buildGenerationPrompt(input, repairCode) }] }],
+  config: {
+    responseMimeType: 'application/json',
+    responseJsonSchema: OWNER_CONTENT_AI_SCHEMAS[input.mode],
+    systemInstruction: SYSTEM_INSTRUCTION,
+    maxOutputTokens: input.mode === 'lesson' ? 16_384 : 6_144,
+    temperature: 0.4,
+  },
+});
 
 export const generateValidatedOwnerContent = async (
   generator: GeminiStructuredGenerator,
@@ -428,19 +524,10 @@ export const generateValidatedOwnerContent = async (
   for (let attempt = 1; attempt <= 2; attempt += 1) {
     let response: { text?: string };
     try {
-      response = await generator.generateContent({
-        model,
-        contents: [{ role: 'user', parts: [{ text: buildGenerationPrompt(input, repairCode) }] }],
-        config: {
-          responseMimeType: 'application/json',
-          responseJsonSchema: OWNER_CONTENT_AI_SCHEMAS[input.mode],
-          systemInstruction: SYSTEM_INSTRUCTION,
-          maxOutputTokens: input.mode === 'lesson' ? 16_384 : 6_144,
-          temperature: 0.4,
-        },
-      });
+      response = await generator.generateContent(buildGeminiOwnerContentRequest(model, input, repairCode));
     } catch (error) {
-      throw new OwnerContentAIError('provider_request_failed', error instanceof Error ? error.name : 'provider_request_failed');
+      const provider = classifyGeminiProviderError(error);
+      throw new OwnerContentAIError('provider_request_failed', provider.message, false, provider);
     }
     try {
       if (!response.text) throw new OwnerContentAIError('empty_model_response', undefined, true);
