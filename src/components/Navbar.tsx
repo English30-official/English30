@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { ActiveTab, PlatformSettings, StudentStats } from '../types';
 import { authService, settingsService } from '../services';
-import { Award, BookOpen, CreditCard, GraduationCap, LogIn, LogOut, Menu, ShieldCheck, Sparkles, Target, Volume2, X } from 'lucide-react';
+import { Award, BookOpen, CreditCard, GraduationCap, LogIn, LogOut, Menu, ShieldCheck, Sparkles, Target, UserRound, Volume2, X } from 'lucide-react';
 import { OwnerEditable, useOwnerEditMode } from './owner-edit/OwnerEditMode';
+import './homepage/ApprovedReferenceHome.css';
 
 interface NavbarProps {
   activeTab: ActiveTab;
@@ -30,8 +31,8 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, onSwitc
   const primaryNav = [
     { id: 'home' as ActiveTab, labelAr: 'الرئيسية' },
     { id: 'courses' as ActiveTab, labelAr: 'الدورات' },
-    { id: 'placement-test' as ActiveTab, labelAr: 'تحديد المستوى' },
-    { id: 'pricing' as ActiveTab, labelAr: 'الاشتراكات' },
+    { id: 'placement-test' as ActiveTab, labelAr: 'كيف نتعلم' },
+    { id: 'pricing' as ActiveTab, labelAr: 'الأسعار' },
   ];
 
   const learningNav = [
@@ -107,22 +108,27 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, onSwitc
         </nav>
 
         <div className="e30-nav-actions">
-          {signedIn && (
-            <button type="button" onClick={() => go('dashboard')} className="e30-dashboard-link">
-              <BookOpen className="h-4 w-4" />
-              لوحتي
-            </button>
-          )}
           {signedIn ? (
-            <button type="button" onClick={() => void logout()} className="e30-login-link" aria-label="تسجيل الخروج">
-              <LogOut className="h-4 w-4" />
-              <span className="hidden xl:inline">خروج</span>
-            </button>
+            <>
+              <button type="button" onClick={() => go('dashboard')} className="e30-dashboard-link">
+                <BookOpen className="h-4 w-4" />
+                لوحتي
+              </button>
+              <button type="button" onClick={() => void logout()} className="e30-login-link" aria-label="تسجيل الخروج">
+                <LogOut className="h-4 w-4" />
+                <span className="hidden xl:inline">خروج</span>
+              </button>
+            </>
           ) : (
-            <button type="button" onClick={onAuth} className="e30-btn e30-btn-primary e30-nav-cta">
-              <LogIn className="h-4 w-4" />
-              دخول
-            </button>
+            <>
+              <button type="button" onClick={onAuth} className="e30-login-link">
+                <UserRound className="h-4 w-4" />
+                <span>تسجيل الدخول</span>
+              </button>
+              <button type="button" onClick={() => go('courses')} className="e30-btn e30-btn-primary e30-nav-cta">
+                ابدأ الآن
+              </button>
+            </>
           )}
           {onSwitchToOwnerView && (
             <button type="button" onClick={onSwitchToOwnerView} className="e30-owner-link" aria-label="لوحة المالك">
